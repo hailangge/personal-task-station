@@ -14,10 +14,12 @@
 ```text
 pyproject.toml
 README.md
+DEPLOYMENT.md
 requirements.md
 design.md
 tasks.md
 scripts/generate_certs.py
+scripts/validate_security.py
 certs/
 fixtures/
 src/personal_task_station/
@@ -31,6 +33,9 @@ Key packages:
 - `src/personal_task_station/shared/`: shared enums, schemas, settings, and ORM models
 - `src/personal_task_station/skills/`: agent-facing wrappers and CLIs
 - `scripts/generate_certs.py`: self-signed CA / server / client certificate generator
+- `scripts/validate_security.py`: end-to-end security validation script
+
+For production deployment instructions, see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ## Setup
 

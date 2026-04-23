@@ -17,6 +17,8 @@
 - [x] Enforce HTTPS on client and skills
 - [x] Add TLS/mTLS integration tests
 - [x] Update README and tasks.md
+- [x] Add strict end-to-end security validation script
+- [x] Write detailed deployment guide (DEPLOYMENT.md)
 
 ## Notes
 - Current blocker/status: Waiting on real financial source files later from user; current implementation must ship with mock/sample-driven validation and extensible import pipeline.
