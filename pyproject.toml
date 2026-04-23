@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-task-station"
+version = "0.1.0"
+description = "Personal task and finance assistant MVP with FastAPI, SQLite, and PySide6."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+  { name = "OpenAI Codex" }
+]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "sqlalchemy>=2.0.30",
+  "pydantic>=2.8.0",
+  "httpx>=0.28.0",
+  "python-multipart>=0.0.9",
+  "PySide6>=6.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-qt>=4.4.0",
+  "alembic>=1.13.0",
+]
+litellm = [
+  "litellm>=1.43.0",
+]
+
+[project.scripts]
+pts-server = "personal_task_station.server.app:main"
+pts-client = "personal_task_station.client.main:main"
+pts-task-skill = "personal_task_station.skills.task_skill:main"
+pts-finance-skill = "personal_task_station.skills.finance_skill:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

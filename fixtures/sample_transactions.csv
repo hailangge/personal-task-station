@@ -1,0 +1,6 @@
+date,amount,direction,merchant,source,order_id,note,card_last4
+2026-03-01,-25.50,expense,Fresh Market,WeChat,wx001,vegetables,1234
+2026-03-01,-25.50,expense,Fresh Market,DebitCard,wx001,duplicate bank settlement,1234
+2026-03-02,-88.00,expense,Coffee Town,Alipay,ali002,meeting coffee,5678
+2026-03-03,12000.00,income,Payroll,Bank,bank003,monthly salary,0001
+2026-03-05,-1500.00,expense,Rent Home,Bank,bank004,apartment rent,0001
