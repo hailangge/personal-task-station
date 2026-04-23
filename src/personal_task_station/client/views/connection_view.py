@@ -26,7 +26,8 @@ class ConnectionConfigWidget(QWidget):
         self.server_cert_path_input = QLineEdit()
         self.client_cert_path_input = QLineEdit()
         self.client_key_path_input = QLineEdit()
-        self.allow_local_http_input = QCheckBox("Allow localhost HTTP for development")
+        self.https_note = QLabel("HTTPS is required. Provide server cert for self-signed.")
+        self.https_note.setStyleSheet("color: gray;")
         self.timeout_input = QSpinBox()
         self.timeout_input.setRange(1, 120)
         self.timeout_input.setValue(15)
@@ -40,7 +41,7 @@ class ConnectionConfigWidget(QWidget):
         form.addRow("Server cert path", self.server_cert_path_input)
         form.addRow("Client cert path", self.client_cert_path_input)
         form.addRow("Client key path", self.client_key_path_input)
-        form.addRow("", self.allow_local_http_input)
+        form.addRow("", self.https_note)
         form.addRow("Timeout (s)", self.timeout_input)
 
         buttons = QHBoxLayout()
@@ -59,7 +60,6 @@ class ConnectionConfigWidget(QWidget):
         self.server_cert_path_input.setText(config.server_cert_path or "")
         self.client_cert_path_input.setText(config.client_cert_path or "")
         self.client_key_path_input.setText(config.client_key_path or "")
-        self.allow_local_http_input.setChecked(config.allow_insecure_localhost)
         self.timeout_input.setValue(int(config.timeout_seconds))
 
     def get_config(self) -> ConnectionConfig:
@@ -69,7 +69,7 @@ class ConnectionConfigWidget(QWidget):
             server_cert_path=self._optional_path(self.server_cert_path_input.text()),
             client_cert_path=self._optional_path(self.client_cert_path_input.text()),
             client_key_path=self._optional_path(self.client_key_path_input.text()),
-            allow_insecure_localhost=self.allow_local_http_input.isChecked(),
+            allow_insecure_localhost=False,
             timeout_seconds=float(self.timeout_input.value()),
             verify_tls=True,
         )

@@ -1,6 +1,7 @@
 .venv/
 .pytest_cache/
 .local/
+certs/
 __pycache__/
 *.pyc
 *.pyo

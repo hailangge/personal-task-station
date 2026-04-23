@@ -23,11 +23,8 @@ from personal_task_station.shared.schemas import (
 
 def build_verify_setting(config: ConnectionConfig):
     parsed = urlparse(config.base_url)
-    is_local = parsed.hostname in {"127.0.0.1", "localhost"}
     if parsed.scheme == "http":
-        if is_local and config.allow_insecure_localhost:
-            return False
-        raise ValueError("HTTP is only allowed for localhost when development mode is enabled.")
+        raise ValueError("HTTP is not allowed. Use HTTPS only.")
     if config.server_cert_path:
         return str(Path(config.server_cert_path))
     return config.verify_tls

@@ -17,6 +17,8 @@ README.md
 requirements.md
 design.md
 tasks.md
+scripts/generate_certs.py
+certs/
 fixtures/
 src/personal_task_station/
 tests/
@@ -28,6 +30,7 @@ Key packages:
 - `src/personal_task_station/client/`: PySide6 desktop client
 - `src/personal_task_station/shared/`: shared enums, schemas, settings, and ORM models
 - `src/personal_task_station/skills/`: agent-facing wrappers and CLIs
+- `scripts/generate_certs.py`: self-signed CA / server / client certificate generator
 
 ## Setup
 
@@ -38,6 +41,21 @@ python -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
 ```
+
+## Generate certificates (HTTPS / mTLS)
+
+The server **requires HTTPS** in production. Generate self-signed certificates:
+
+```bash
+.venv/bin/python scripts/generate_certs.py --output-dir certs --hostname localhost
+```
+
+Output files:
+
+- `certs/ca-cert.pem` — distribute to clients for server verification
+- `certs/ca-key.pem` — keep secret (CA signing key)
+- `certs/server-cert.pem` + `certs/server-key.pem` — server HTTPS identity
+- `certs/client-cert.pem` + `certs/client-key.pem` — optional, for mTLS client authentication
 
 ## Configuration
 
@@ -50,6 +68,27 @@ export PTS_HOST="127.0.0.1"
 export PTS_PORT="8000"
 ```
 
+Enable HTTPS (recommended):
+
+```bash
+export PTS_SSL_CERTFILE="$PWD/certs/server-cert.pem"
+export PTS_SSL_KEYFILE="$PWD/certs/server-key.pem"
+```
+
+Enable mTLS (optional — server verifies client certificates):
+
+```bash
+export PTS_SSL_CAFILE="$PWD/certs/ca-cert.pem"
+```
+
+Client / skill trust configuration:
+
+```bash
+export PTS_SERVER_CERT_PATH="$PWD/certs/ca-cert.pem"
+export PTS_CLIENT_CERT_PATH="$PWD/certs/client-cert.pem"
+export PTS_CLIENT_KEY_PATH="$PWD/certs/client-key.pem"
+```
+
 Optional LiteLLM integration:
 
 ```bash
@@ -60,9 +99,11 @@ export PTS_LITELLM_API_KEY="..."
 
 Security notes:
 
-- Production should use `https://...` URLs with certificate validation enabled.
+- **HTTP is rejected.** The desktop client and skill wrappers require HTTPS only.
+- Provide `PTS_SERVER_CERT_PATH` so clients can verify a self-signed server certificate.
+- When `PTS_SSL_CAFILE` is set, the server enforces mTLS and rejects clients without a valid certificate.
 - The desktop client and skill wrappers do not silently ignore TLS errors.
-- Local `http://127.0.0.1` development is supported only when `allow_insecure_localhost` is explicitly enabled in client/skill config.
+- Local `http://127.0.0.1` development is no longer supported; use HTTPS even for localhost.
 
 ## Run the server
 
@@ -114,9 +155,9 @@ Fixture file:
 Example using the finance skill wrapper:
 
 ```bash
-PTS_SKILL_BASE_URL="http://127.0.0.1:8000" \
+PTS_SKILL_BASE_URL="https://127.0.0.1:8000" \
 PTS_SKILL_API_KEY="$PTS_API_KEY" \
-PTS_SKILL_ALLOW_INSECURE_LOCALHOST="true" \
+PTS_SKILL_SERVER_CERT_PATH="$PWD/certs/ca-cert.pem" \
 .venv/bin/pts-finance-skill import \
   --source-name fixture \
   --file-path fixtures/sample_transactions.csv
@@ -125,9 +166,9 @@ PTS_SKILL_ALLOW_INSECURE_LOCALHOST="true" \
 Then inspect the summary:
 
 ```bash
-PTS_SKILL_BASE_URL="http://127.0.0.1:8000" \
+PTS_SKILL_BASE_URL="https://127.0.0.1:8000" \
 PTS_SKILL_API_KEY="$PTS_API_KEY" \
-PTS_SKILL_ALLOW_INSECURE_LOCALHOST="true" \
+PTS_SKILL_SERVER_CERT_PATH="$PWD/certs/ca-cert.pem" \
 .venv/bin/pts-finance-skill summary \
   --year 2026 \
   --month 3

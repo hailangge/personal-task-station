@@ -25,7 +25,7 @@ def _build_test_client(test_client):
         )
 
     transport = httpx.MockTransport(handler)
-    config = ConnectionConfig(base_url="http://127.0.0.1:8000", api_key="test-token", allow_insecure_localhost=True)
+    config = ConnectionConfig(base_url="https://127.0.0.1:8000", api_key="test-token")
     return ServerApiClient(config, transport=transport)
 
 

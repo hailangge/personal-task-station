@@ -18,11 +18,21 @@ def test_client_settings_round_trip(tmp_path: Path):
     assert loaded.desktop.opacity == 0.88
 
 
-def test_http_verify_rejected_without_local_dev_flag():
-    config = ConnectionConfig(base_url="http://127.0.0.1:8000", allow_insecure_localhost=False)
+def test_http_is_rejected():
+    config = ConnectionConfig(base_url="http://127.0.0.1:8000")
     try:
         build_verify_setting(config)
     except ValueError as exc:
-        assert "localhost" in str(exc)
+        assert "HTTPS" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected ValueError")
+
+
+def test_https_with_server_cert_path():
+    config = ConnectionConfig(base_url="https://localhost:8443", server_cert_path="/certs/ca-cert.pem")
+    assert build_verify_setting(config) == "/certs/ca-cert.pem"
+
+
+def test_https_with_system_ca_store():
+    config = ConnectionConfig(base_url="https://localhost:8443")
+    assert build_verify_setting(config) is True

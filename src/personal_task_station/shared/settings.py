@@ -11,7 +11,9 @@ class AppSettings:
     api_key: str
     host: str
     port: int
-    allow_insecure_localhost: bool
+    ssl_certfile: str | None
+    ssl_keyfile: str | None
+    ssl_cafile: str | None
     server_cert_path: str | None
     client_cert_path: str | None
     client_key_path: str | None
@@ -29,8 +31,9 @@ class AppSettings:
             api_key=os.environ.get("PTS_API_KEY", "dev-token"),
             host=os.environ.get("PTS_HOST", "127.0.0.1"),
             port=int(os.environ.get("PTS_PORT", "8000")),
-            allow_insecure_localhost=os.environ.get("PTS_ALLOW_INSECURE_LOCALHOST", "false").lower()
-            in {"1", "true", "yes", "on"},
+            ssl_certfile=os.environ.get("PTS_SSL_CERTFILE"),
+            ssl_keyfile=os.environ.get("PTS_SSL_KEYFILE"),
+            ssl_cafile=os.environ.get("PTS_SSL_CAFILE"),
             server_cert_path=os.environ.get("PTS_SERVER_CERT_PATH"),
             client_cert_path=os.environ.get("PTS_CLIENT_CERT_PATH"),
             client_key_path=os.environ.get("PTS_CLIENT_KEY_PATH"),
