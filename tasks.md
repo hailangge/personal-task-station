@@ -11,7 +11,7 @@
 - [x] Implement agent-facing skills wrappers
 - [x] Add unit, integration, and UI tests
 - [x] Run local validation on current machine
-- [ ] Final review and commit
+- [x] Final review and commit
 
 ## Notes
 - Current blocker/status: Waiting on real financial source files later from user; current implementation must ship with mock/sample-driven validation and extensible import pipeline.

@@ -8,11 +8,17 @@ from personal_task_station.shared.settings import AppSettings
 router = APIRouter(prefix="/config", tags=["config"])
 
 
+def _mask_key(key: str) -> str:
+    if len(key) <= 4:
+        return "****"
+    return "*" * (len(key) - 4) + key[-4:]
+
+
 @router.get("/client-defaults", response_model=ConnectionConfig)
 def client_defaults(settings: AppSettings = Depends(AppSettings.load)) -> ConnectionConfig:
     return ConnectionConfig(
         base_url=f"http://{settings.host}:{settings.port}",
-        api_key=settings.api_key,
+        api_key=_mask_key(settings.api_key),
         verify_tls=True,
         server_cert_path=settings.server_cert_path,
         client_cert_path=settings.client_cert_path,
