@@ -224,3 +224,33 @@ class ModelCallLog(Base):
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class EmailAccount(Base):
+    __tablename__ = "email_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    imap_host: Mapped[str] = mapped_column(String(255))
+    imap_port: Mapped[int] = mapped_column(Integer, default=993)
+    username: Mapped[str] = mapped_column(String(255))
+    password: Mapped[str] = mapped_column(String(255))  # In production, encrypt this
+    folder: Mapped[str] = mapped_column(String(120), default="INBOX")
+    use_ssl: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_import_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class EmailImportLog(Base):
+    __tablename__ = "email_import_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email_account_id: Mapped[int] = mapped_column(ForeignKey("email_accounts.id", ondelete="CASCADE"))
+    email_uid: Mapped[str] = mapped_column(String(120))
+    email_subject: Mapped[str] = mapped_column(String(500), default="")
+    email_from: Mapped[str] = mapped_column(String(255), default="")
+    parser_used: Mapped[str] = mapped_column(String(120), default="")
+    transaction_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

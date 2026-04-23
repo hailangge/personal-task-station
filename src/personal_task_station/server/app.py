@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import Depends, FastAPI
 
-from personal_task_station.server.routers import billing, config, health, tasks
+from personal_task_station.server.routers import billing, config, email_import, health, tasks
 from personal_task_station.shared.database import Base, get_engine
 from personal_task_station.shared.security import require_api_key
 from personal_task_station.shared.settings import AppSettings
@@ -28,6 +28,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(config.router, dependencies=[Depends(require_api_key)])
     app.include_router(tasks.router, dependencies=[Depends(require_api_key)])
     app.include_router(billing.router, dependencies=[Depends(require_api_key)])
+    app.include_router(email_import.router, dependencies=[Depends(require_api_key)])
     return app
 
 

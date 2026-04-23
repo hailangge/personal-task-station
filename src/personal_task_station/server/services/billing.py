@@ -467,6 +467,92 @@ class BillingService:
             return f"card:{self._dominant_value(accounts)}"
         return f"source:{transaction.source_name}"
 
+    def create_import_job(self, source_name: str, filename: str) -> BillImportJob:
+        job = BillImportJob(source_name=source_name, filename=filename, logs=[{"stage": "created"}])
+        self.session.add(job)
+        self.session.flush()
+        return job
+
+    def add_raw_transaction_from_email(self, import_job_id: int, raw_tx) -> None:
+        from personal_task_station.server.importers.base import RawTransaction as ImporterRawTx
+
+        raw_record = RawTransaction(
+            import_job_id=import_job_id,
+            row_number=0,
+            source_name=raw_tx.source_name,
+            raw_data=raw_tx.raw_data,
+            original_reference=raw_tx.external_id,
+        )
+        self.session.add(raw_record)
+        self.session.flush()
+
+        normalized_payload = {
+            "occurred_on": raw_tx.occurred_on,
+            "amount": abs(raw_tx.amount),
+            "direction": raw_tx.direction,
+            "merchant_name": raw_tx.merchant_name,
+            "normalized_merchant": self._normalize_merchant_name(raw_tx.merchant_name),
+            "source_name": raw_tx.source_name,
+            "channel": raw_tx.channel,
+            "external_id": raw_tx.external_id,
+            "note": raw_tx.note,
+            "card_last4": raw_tx.card_last4,
+            "dedupe_key": self._dedupe_key(
+                raw_tx.occurred_on,
+                raw_tx.amount,
+                raw_tx.direction,
+                self._normalize_merchant_name(raw_tx.merchant_name),
+                raw_tx.external_id,
+            ),
+        }
+        classification = self._classify_transaction(normalized_payload)
+        normalized_payload.update(
+            {
+                "category_suggested": classification.category,
+                "category_final": classification.category,
+                "classification_confidence": classification.confidence,
+                "classification_reason": classification.reason,
+                "classifier_name": classification.classifier_name,
+            }
+        )
+        normalized_record = NormalizedTransaction(
+            import_job_id=import_job_id,
+            raw_transaction=raw_record,
+            **normalized_payload,
+        )
+        self.session.add(normalized_record)
+
+    def normalize_transactions(self, import_job_id: int) -> None:
+        job = self.session.get(BillImportJob, import_job_id)
+        if not job:
+            return
+        job.status = ImportJobStatus.COMPLETED
+        job.raw_count = self.session.scalar(
+            select(func.count()).select_from(RawTransaction).where(RawTransaction.import_job_id == import_job_id)
+        ) or 0
+        job.normalized_count = self.session.scalar(
+            select(func.count()).select_from(NormalizedTransaction).where(NormalizedTransaction.import_job_id == import_job_id)
+        ) or 0
+        job.logs = job.logs + [
+            {"stage": "normalized", "raw_count": job.raw_count, "normalized_count": job.normalized_count}
+        ]
+
+    def merge_and_classify(self, import_job_id: int) -> None:
+        self.rebuild_merged_transactions()
+        job = self.session.get(BillImportJob, import_job_id)
+        if job:
+            merged_count = self.session.scalar(
+                select(func.count()).select_from(MergedTransaction).where(MergedTransaction.is_active)
+            )
+            job.merged_count = int(merged_count or 0)
+            job.logs = job.logs + [{"stage": "merged", "merged_count": job.merged_count}]
+        self._record_audit(
+            "billing.email_import_completed",
+            "bill_import_job",
+            str(import_job_id),
+            {"import_job_id": import_job_id},
+        )
+
     def _record_audit(self, action: str, entity_type: str, entity_id: str, details: dict) -> None:
         self.session.add(
             AuditLog(

@@ -213,6 +213,56 @@ class ModelCallLogRead(BaseModel):
     created_at: datetime
 
 
+class EmailAccountCreate(BaseModel):
+    name: str
+    imap_host: str
+    imap_port: int = 993
+    username: str
+    password: str
+    folder: str = "INBOX"
+    use_ssl: bool = True
+    is_active: bool = True
+
+
+class EmailAccountRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    imap_host: str
+    imap_port: int
+    username: str
+    folder: str
+    use_ssl: bool
+    is_active: bool
+    last_import_at: datetime | None
+    created_at: datetime
+
+
+class EmailAccountUpdate(BaseModel):
+    name: str | None = None
+    imap_host: str | None = None
+    imap_port: int | None = None
+    username: str | None = None
+    password: str | None = None
+    folder: str | None = None
+    use_ssl: bool | None = None
+    is_active: bool | None = None
+
+
+class EmailImportPreview(BaseModel):
+    uid: str
+    subject: str
+    from_addr: str
+    date: str
+
+
+class EmailImportResult(BaseModel):
+    source_name: str
+    transaction_count: int
+    errors: list[str]
+
+
 class ClientSettings(BaseModel):
     connection: ConnectionConfig = Field(default_factory=ConnectionConfig)
     desktop: DesktopPreferences = Field(default_factory=DesktopPreferences)

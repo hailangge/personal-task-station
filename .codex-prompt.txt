@@ -1,0 +1,28 @@
+You are implementing a new git repository at /mnt/data/repositories/personal-task-station.
+
+Follow the spec files in the repo root exactly:
+- requirements.md
+- design.md
+- tasks.md
+
+Mission: fully implement the MVP described there, including:
+- Linux-deployable FastAPI server with SQLite persistence
+- task CRUD, subitems, status history, calendar aggregation API
+- billing import pipeline with sample/mock-compatible CSV ingestion, normalization, dedupe/merge, categorization, monthly summary, LiteLLM-compatible pluggable classifier with fallback rules
+- Windows/Linux desktop client using PySide6 with calendar widget styles, transparency settings, day markers, task popup/details, task add/edit flow, finance views, connection config
+- agent-facing skills wrappers for tasks and finance
+- necessary tests: unit, integration, and UI tests where feasible in this environment
+- keep the implementation runnable and testable in the current machine environment
+
+Rules:
+1. Update tasks.md as milestones progress. It is the live status file.
+2. Keep changes inside this repo only.
+3. Prefer a coherent, shippable MVP over partial stubs.
+4. Add sample fixtures where real financial data is unavailable.
+5. Include README with setup, run, test, and validation instructions.
+6. Before claiming completion, run the relevant tests/checks you can run locally and summarize exact commands/results.
+7. If a platform-specific client feature cannot be fully exercised in headless Linux, still implement it and add the strongest practical test or smoke validation available.
+8. Use only GPT-5.4, no alternate model strategy.
+9. Respect the existing git repo and preserve the requirements/design/tasks docs as canonical sources of truth.
+
+Start from the current repo state, continue incrementally, and update tasks.md as you go. When complete, summarize files changed, commands run, results, and any residual risks.

@@ -2,7 +2,8 @@
 
 ## 1. 概述
 
-本报告调研了国内五大主流支付/消费渠道的交易数据自动化获取方式：
+本报告调研了国内六大主流支付/消费渠道的交易数据自动化获取方式：
+- 微信支付（WeChat Pay）
 - 支付宝（Alipay）
 - 淘宝/天猫（Taobao/Tmall）
 - 京东（JD）
@@ -13,7 +14,65 @@
 
 ---
 
-## 2. 支付宝（Alipay）
+## 2. 微信支付（WeChat Pay）
+
+### 2.1 官方开放 API（商户平台）
+
+| 项目 | 详情 |
+|------|------|
+| 平台名称 | 微信支付商户平台（pay.weixin.qq.com） |
+| API 文档 | https://pay.weixin.qq.com/wiki/doc/apiv3/apis/chapter3_1.shtml |
+| 核心接口 | `GET /v3/bill/tradebill` |
+| 接口功能 | 下载交易账单（按日） |
+| 数据格式 | CSV / GZIP 压缩 |
+| 权限要求 | 需开通微信支付商户号 |
+| 个人可用 | **否**，需要营业执照等商户资质 |
+| 认证方式 | 商户 API 证书（mTLS）+ APIv3 密钥 |
+
+### 2.2 个人用户方案
+
+微信支付**没有面向个人消费者的开放 API**。个人用户获取账单的方式：
+
+#### 方案 A：微信 App 账单导出（推荐）
+
+| 项目 | 详情 |
+|------|------|
+| 操作路径 | 微信 → 我 → 服务 → 钱包 → 账单 → 常见问题 → 下载账单 |
+| 导出类型 | 「用于个人对账」或「用做证明材料」 |
+| 导出格式 | Excel（个人对账）/ PDF（证明材料） |
+| 时间范围 | 最长 1 年 |
+| 邮箱接收 | 填写邮箱后，微信发送下载链接到邮箱 |
+| 自动化 | 需手动操作，无法定时自动导出 |
+
+#### 方案 B：商户号 API（仅适用于商户）
+
+如果用户有微信支付商户号，可通过 API 自动拉取：
+
+```python
+# 伪代码
+import requests
+
+headers = {
+    "Authorization": f"WECHATPAY2-SHA256-RSA2048 {signature}",
+    "Accept": "application/json",
+}
+response = requests.get(
+    "https://api.mch.weixin.qq.com/v3/bill/tradebill?bill_date=2026-04-22",
+    headers=headers,
+    cert=("apiclient_cert.pem", "apiclient_key.pem"),
+)
+# 返回的是账单下载链接或重定向到 CSV 文件
+```
+
+### 2.3 结论
+
+- **普通消费者**：无官方 API，只能手动导出 Excel 或通过邮箱接收账单链接
+- **商户**：有完善的 API，但需要商户资质
+- **推荐方案**：与支付宝/银行一样，通过微信 App 导出 CSV 后手动导入，或等待微信发送账单邮件到专用邮箱
+
+---
+
+## 3. 支付宝（Alipay）
 
 ### 2.1 官方开放 API
 
@@ -78,7 +137,7 @@ pip install alipay-sdk-python
 
 ---
 
-## 3. 招商银行（CMB）
+## 4. 招商银行（CMB）
 
 ### 3.1 官方 API
 
@@ -126,7 +185,7 @@ pip install alipay-sdk-python
 
 ---
 
-## 4. 淘宝 / 天猫（Taobao/Tmall）
+## 5. 淘宝 / 天猫（Taobao/Tmall）
 
 ### 4.1 官方开放 API（TOP）
 
@@ -166,7 +225,7 @@ pip install alipay-sdk-python
 
 ---
 
-## 5. 京东（JD）
+## 6. 京东（JD）
 
 ### 5.1 官方开放 API
 
@@ -201,7 +260,7 @@ pip install alipay-sdk-python
 
 ---
 
-## 6. 拼多多（PDD）
+## 7. 拼多多（PDD）
 
 ### 6.1 官方开放 API
 
@@ -228,7 +287,7 @@ pip install alipay-sdk-python
 
 ---
 
-## 7. 通用替代方案对比
+## 8. 通用替代方案对比
 
 ### 7.1 邮件对账单（最可行的自动化方案）
 
@@ -273,7 +332,7 @@ pip install alipay-sdk-python
 
 ---
 
-## 8. 推荐实现策略
+## 9. 推荐实现策略
 
 ### 8.1 短期方案（MVP 可用）
 
@@ -332,7 +391,7 @@ class EmailBillImporter:
 
 ---
 
-## 9. 风险评估
+## 10. 风险评估
 
 | 风险 | 等级 | 说明 |
 |------|------|------|
@@ -344,7 +403,7 @@ class EmailBillImporter:
 
 ---
 
-## 10. 下一步行动建议
+## 11. 下一步行动建议
 
 1. **立即实施**：支付宝账单 API 接入
    - 注册支付宝开放平台应用
