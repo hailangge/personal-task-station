@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from .enums import BillDirection, ImportJobStatus, MergeStatus, SubItemStatus, TaskStatus
 
@@ -50,6 +50,23 @@ class TaskBase(BaseModel):
     is_pinned: bool = False
     note: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_spec_field_names(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        aliases = {
+            "scheduled_date": "task_date",
+            "start_time": "start_at",
+            "due_time": "due_at",
+            "notes": "note",
+        }
+        for public_name, internal_name in aliases.items():
+            if public_name in normalized and internal_name not in normalized:
+                normalized[internal_name] = normalized[public_name]
+        return normalized
+
 
 class TaskCreate(TaskBase):
     subitems: list[TaskSubItemCreate] = Field(default_factory=list)
@@ -66,6 +83,23 @@ class TaskUpdate(BaseModel):
     tags: list[str] | None = None
     is_pinned: bool | None = None
     note: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_spec_field_names(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        aliases = {
+            "scheduled_date": "task_date",
+            "start_time": "start_at",
+            "due_time": "due_at",
+            "notes": "note",
+        }
+        for public_name, internal_name in aliases.items():
+            if public_name in normalized and internal_name not in normalized:
+                normalized[internal_name] = normalized[public_name]
+        return normalized
 
 
 class TaskStatusChange(BaseModel):
@@ -95,6 +129,22 @@ class TaskRead(TaskBase):
     subitems: list[TaskSubItemRead] = Field(default_factory=list)
     history: list[TaskStatusHistoryRead] = Field(default_factory=list)
 
+    @computed_field
+    def scheduled_date(self) -> date | None:
+        return self.task_date
+
+    @computed_field
+    def start_time(self) -> datetime | None:
+        return self.start_at
+
+    @computed_field
+    def due_time(self) -> datetime | None:
+        return self.due_at
+
+    @computed_field
+    def notes(self) -> str:
+        return self.note
+
 
 class CalendarDaySummary(BaseModel):
     date: date
@@ -102,9 +152,14 @@ class CalendarDaySummary(BaseModel):
     scheduled: int
     in_progress: int
     on_hold: int
+    blocked: int = 0
+    incomplete: int = 0
     completed: int
     cancelled: int
+    has_pinned: bool = False
+    highest_priority: int | None = None
     dominant_status: TaskStatus | None
+    status_summary: str = ""
 
 
 class ImportJobRead(BaseModel):
@@ -266,3 +321,4 @@ class EmailImportResult(BaseModel):
 class ClientSettings(BaseModel):
     connection: ConnectionConfig = Field(default_factory=ConnectionConfig)
     desktop: DesktopPreferences = Field(default_factory=DesktopPreferences)
+    default_email_account_id: int | None = None

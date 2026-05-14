@@ -6,6 +6,8 @@ import httpx
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
+    QLineEdit,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -26,7 +28,8 @@ from personal_task_station.client.dialogs.task_dialog import TaskDialog
 from personal_task_station.client.views.connection_view import ConnectionConfigWidget
 from personal_task_station.client.views.finance_view import FinanceView
 from personal_task_station.client.widgets.calendar_widget import TaskCalendarWidget
-from personal_task_station.shared.schemas import ClientSettings, TaskRead
+from personal_task_station.shared.enums import TaskStatus
+from personal_task_station.shared.schemas import ClientSettings, TaskRead, TaskStatusChange
 
 
 class MainWindow(QMainWindow):
@@ -69,12 +72,41 @@ class MainWindow(QMainWindow):
         self.tasks_table.cellDoubleClicked.connect(self._edit_table_task)
         self.view_task_button = QPushButton("View details")
         self.view_task_button.clicked.connect(self._view_selected_task)
+        self.new_task_button = QPushButton("New task")
+        self.new_task_button.clicked.connect(self.open_task_dialog)
+        self.delete_task_button = QPushButton("Delete")
+        self.delete_task_button.clicked.connect(self._delete_selected_task)
+        self.status_change_input = QComboBox()
+        self.status_change_input.addItems([status.value for status in TaskStatus])
+        self.status_change_button = QPushButton("Set status")
+        self.status_change_button.clicked.connect(self._change_selected_task_status)
+        self.range_filter = QComboBox()
+        self.range_filter.addItems(["all", "today", "this_week", "this_month"])
+        self.status_filter = QComboBox()
+        self.status_filter.addItem("all")
+        self.status_filter.addItems([status.value for status in TaskStatus])
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search title/description/notes")
+        self.apply_filter_button = QPushButton("Apply filters")
+        self.apply_filter_button.clicked.connect(self.refresh_tasks)
         tasks_tab = QWidget()
         tasks_layout = QVBoxLayout(tasks_tab)
         task_controls = QHBoxLayout()
+        task_controls.addWidget(self.new_task_button)
         task_controls.addWidget(self.view_task_button)
+        task_controls.addWidget(self.delete_task_button)
+        task_controls.addWidget(self.status_change_input)
+        task_controls.addWidget(self.status_change_button)
         task_controls.addStretch(1)
+        task_filters = QHBoxLayout()
+        task_filters.addWidget(QLabel("Range"))
+        task_filters.addWidget(self.range_filter)
+        task_filters.addWidget(QLabel("Status"))
+        task_filters.addWidget(self.status_filter)
+        task_filters.addWidget(self.search_input)
+        task_filters.addWidget(self.apply_filter_button)
         tasks_layout.addLayout(task_controls)
+        tasks_layout.addLayout(task_filters)
         tasks_layout.addWidget(self.tasks_table)
 
         self.finance_view = FinanceView()
@@ -101,7 +133,7 @@ class MainWindow(QMainWindow):
         self.refresh_finance()
 
     def refresh_tasks(self) -> None:
-        tasks = self.api_client.list_tasks()
+        tasks = self.api_client.list_tasks(**self._task_filter_params())
         self._set_tasks(tasks)
 
     def refresh_calendar(self) -> None:
@@ -127,6 +159,7 @@ class MainWindow(QMainWindow):
         dialog = DateTasksDialog(selected_date, tasks, self)
         dialog.createRequested.connect(lambda target_date: self.open_task_dialog(selected_date=target_date))
         dialog.editRequested.connect(self.open_task_dialog_for_id)
+        dialog.statusChangeRequested.connect(self._change_task_status_from_date_popup)
         dialog.exec()
 
     def open_task_dialog(self, selected_date: date | None = None) -> None:
@@ -144,7 +177,7 @@ class MainWindow(QMainWindow):
 
     def open_task_dialog_for_id(self, task_id: int) -> None:
         task = self.api_client.get_task(task_id)
-        dialog = TaskDialog(self, task=task)
+        dialog = TaskDialog(self, task=task, api_client=self.api_client)
         if dialog.exec():
             try:
                 payload = dialog.update_payload()
@@ -183,13 +216,64 @@ class MainWindow(QMainWindow):
             self.open_task_dialog_for_id(int(item.text()))
 
     def _view_selected_task(self) -> None:
+        task_id = self._selected_task_id()
+        if task_id:
+            self.open_task_dialog_for_id(task_id)
+
+    def _delete_selected_task(self) -> None:
+        task_id = self._selected_task_id()
+        if task_id:
+            self.api_client.delete_task(task_id)
+            self.refresh_all()
+
+    def _change_selected_task_status(self) -> None:
+        task_id = self._selected_task_id()
+        if task_id:
+            self.api_client.change_task_status(
+                task_id,
+                TaskStatusChange(status=TaskStatus(self.status_change_input.currentText()), reason="Changed from desktop UI", source="client"),
+            )
+            self.refresh_all()
+
+    def _change_task_status_from_date_popup(self, task_id: int, status_value: str) -> None:
+        self.api_client.change_task_status(
+            task_id,
+            TaskStatusChange(status=TaskStatus(status_value), reason="Changed from calendar popup", source="client"),
+        )
+        self.refresh_all()
+
+    def _selected_task_id(self) -> int | None:
         selected = self.tasks_table.selectedItems()
         if not selected:
-            return
+            return None
         row = selected[0].row()
         item = self.tasks_table.item(row, 0)
-        if item:
-            self.open_task_dialog_for_id(int(item.text()))
+        return int(item.text()) if item else None
+
+    def _task_filter_params(self) -> dict:
+        params: dict = {}
+        today = date.today()
+        selected_range = self.range_filter.currentText()
+        if selected_range == "today":
+            params["task_date"] = today.isoformat()
+        elif selected_range == "this_week":
+            start = today.fromordinal(today.toordinal() - today.weekday())
+            params["start_date"] = start.isoformat()
+            params["end_date"] = start.fromordinal(start.toordinal() + 6).isoformat()
+        elif selected_range == "this_month":
+            start = date(today.year, today.month, 1)
+            if today.month == 12:
+                end = date(today.year + 1, 1, 1)
+            else:
+                end = date(today.year, today.month + 1, 1)
+            params["start_date"] = start.isoformat()
+            params["end_date"] = end.fromordinal(end.toordinal() - 1).isoformat()
+        if self.status_filter.currentText() != "all":
+            params["status"] = self.status_filter.currentText()
+        query = self.search_input.text().strip()
+        if query:
+            params["query"] = query
+        return params
 
     def _apply_opacity(self, value: int) -> None:
         opacity = value / 100

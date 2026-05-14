@@ -1,0 +1,32 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: personal-task-station:latest
+    container_name: pts-server
+    restart: unless-stopped
+    ports:
+      - "${PTS_PORT:-8000}:8000"
+    volumes:
+      - ${PTS_DATA_DIR:-./.local/docker-data}:/data
+      - ${PTS_CERT_DIR:-./certs}:/certs:ro
+    environment:
+      PTS_HOST: "0.0.0.0"
+      PTS_PORT: "8000"
+      PTS_API_KEY: "${PTS_API_KEY:-change-me}"
+      PTS_DATABASE_URL: "sqlite:////data/personal_task_station.sqlite3"
+      PTS_SSL_CERTFILE: "${PTS_SSL_CERTFILE:-}"
+      PTS_SSL_KEYFILE: "${PTS_SSL_KEYFILE:-}"
+      PTS_SSL_CAFILE: "${PTS_SSL_CAFILE:-}"
+      # Optional LiteLLM classifier
+      PTS_LITELLM_BASE_URL: "${PTS_LITELLM_BASE_URL:-}"
+      PTS_LITELLM_MODEL: "${PTS_LITELLM_MODEL:-}"
+      PTS_LITELLM_API_KEY: "${PTS_LITELLM_API_KEY:-}"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

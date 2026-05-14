@@ -30,6 +30,7 @@ def _service(session: Session) -> TaskService:
 @router.get("", response_model=list[TaskRead])
 def list_tasks(
     task_date: date | None = None,
+    scheduled_date: date | None = None,
     status_filter: TaskStatus | None = Query(default=None, alias="status"),
     query: str | None = None,
     start_date: date | None = None,
@@ -37,7 +38,7 @@ def list_tasks(
     session: Session = Depends(get_db),
 ) -> list[TaskRead]:
     return _service(session).list_tasks(
-        task_date=task_date,
+        task_date=task_date or scheduled_date,
         status=status_filter,
         query=query,
         start_date=start_date,
@@ -56,7 +57,22 @@ def calendar_summary(
     end_date: date,
     session: Session = Depends(get_db),
 ) -> list[CalendarDaySummary]:
-    return _service(session).calendar_summary(start_date, end_date)
+    try:
+        return _service(session).calendar_summary(start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/calendar/month", response_model=list[CalendarDaySummary])
+def calendar_month(
+    year: int = Query(ge=1),
+    month: int = Query(ge=1, le=12),
+    session: Session = Depends(get_db),
+) -> list[CalendarDaySummary]:
+    try:
+        return _service(session).calendar_summary_for_month(year, month)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{task_id}", response_model=TaskRead)
@@ -118,6 +134,14 @@ def update_subitem(
 ) -> TaskSubItemRead:
     try:
         return _service(session).update_subitem(task_id, subitem_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{task_id}/subitems/{subitem_id}/toggle", response_model=TaskSubItemRead)
+def toggle_subitem(task_id: int, subitem_id: int, session: Session = Depends(get_db)) -> TaskSubItemRead:
+    try:
+        return _service(session).toggle_subitem(task_id, subitem_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -33,7 +33,7 @@ class TaskSkill:
 
     def add_subitem(self, task_id: int, title: str, description: str = "") -> dict:
         payload = TaskSubItemCreate(title=title, description=description)
-        return self.client.add_subitem(task_id, payload)
+        return self.client.add_subitem(task_id, payload).model_dump(mode="json")
 
     def delete_task(self, task_id: int) -> dict:
         self.client.delete_task(task_id)

@@ -18,17 +18,26 @@ dependencies = [
   "pydantic>=2.8.0",
   "httpx>=0.28.0",
   "python-multipart>=0.0.9",
-  "PySide6>=6.7.0",
 ]
 
 [project.optional-dependencies]
+server = [
+  "alembic>=1.13.0",
+  "beautifulsoup4>=4.12.0",
+  "lxml>=5.0.0",
+  "openpyxl>=3.1.0",
+  "pdfplumber>=0.11.0",
+]
+client = [
+  "PySide6>=6.7.0",
+]
+litellm = [
+  "litellm>=1.43.0",
+]
 dev = [
   "pytest>=8.3.0",
   "pytest-qt>=4.4.0",
   "alembic>=1.13.0",
-]
-litellm = [
-  "litellm>=1.43.0",
 ]
 
 [project.scripts]

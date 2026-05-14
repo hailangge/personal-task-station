@@ -61,6 +61,20 @@ openssl verify -CAfile /etc/pts/certs/ca-cert.pem /etc/pts/certs/client-cert.pem
 
 ## 5. Server Deployment
 
+### 5.0 Docker Compose Quick Path
+
+The repository includes `Dockerfile`, `docker-compose.yml`, `.dockerignore`, and `scripts/docker-entrypoint.sh` for Linux server deployment.
+
+```bash
+scripts/deploy-linux-server.sh \
+  --data-dir /var/lib/pts \
+  --api-key "change-this-to-a-long-random-string" \
+  --port 8000
+curl -H "X-API-Key: change-this-to-a-long-random-string" http://127.0.0.1:8000/health
+```
+
+For HTTPS in the container, mount certificates through `PTS_CERT_DIR` and set `PTS_SSL_CERTFILE`, `PTS_SSL_KEYFILE`, and optional `PTS_SSL_CAFILE` in `.env`, for example `/certs/server-cert.pem` and `/certs/server-key.pem`.
+
 ### 5.1 Environment Variables
 
 Create `/etc/pts/server.env`:
@@ -183,6 +197,24 @@ sudo iptables -A INPUT -p tcp --dport 8000 -j DROP
 - Do **not** open port 8000 (HTTP)
 
 ## 7. Client Deployment
+
+### 7.0 Package Scripts
+
+Linux client package:
+
+```bash
+scripts/package-linux-client.sh --output-dir dist/linux-client
+```
+
+The Linux script builds a PyInstaller executable when possible and otherwise writes a source tarball with installation instructions.
+
+Windows client package, run on a Windows host or Windows CI runner:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-windows-client.ps1 -OutputDir dist\windows-client
+```
+
+The Windows script creates `dist\windows-client\bin\pts-client.exe` with PyInstaller so target users do not need to install Python.
 
 ### 7.1 Desktop Client Setup
 

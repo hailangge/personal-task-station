@@ -16,20 +16,24 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPlainTextEdit,
+    QPushButton,
+    QHBoxLayout,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+from personal_task_station.client.api_client import ServerApiClient
 from personal_task_station.shared.enums import TaskStatus
-from personal_task_station.shared.schemas import TaskCreate, TaskRead, TaskUpdate
+from personal_task_station.shared.schemas import TaskCreate, TaskRead, TaskSubItemCreate, TaskUpdate
 
 
 class TaskDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, task: TaskRead | None = None):
+    def __init__(self, parent: QWidget | None = None, task: TaskRead | None = None, api_client: ServerApiClient | None = None):
         super().__init__(parent)
         self.setWindowTitle("Task")
         self._task = task
+        self._api_client = api_client
 
         self.title_input = QLineEdit()
         self.description_input = QPlainTextEdit()
@@ -81,9 +85,22 @@ class TaskDialog(QDialog):
 
         self.subitems_group = QGroupBox("Subitems")
         self.subitems_list = QListWidget()
+        self.subitem_title_input = QLineEdit()
+        self.subitem_title_input.setPlaceholderText("New subitem title")
+        self.add_subitem_button = QPushButton("Add")
+        self.toggle_subitem_button = QPushButton("Toggle done")
+        self.delete_subitem_button = QPushButton("Delete")
+        self.add_subitem_button.clicked.connect(self._add_subitem)
+        self.toggle_subitem_button.clicked.connect(self._toggle_subitem)
+        self.delete_subitem_button.clicked.connect(self._delete_subitem)
         subitems_layout = QVBoxLayout(self.subitems_group)
+        subitem_entry = QHBoxLayout()
+        subitem_entry.addWidget(self.subitem_title_input)
+        subitem_entry.addWidget(self.add_subitem_button)
+        subitem_entry.addWidget(self.toggle_subitem_button)
+        subitem_entry.addWidget(self.delete_subitem_button)
         subitems_layout.addWidget(self.subitems_list)
-        self.subitems_group.setVisible(False)
+        subitems_layout.addLayout(subitem_entry)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -119,8 +136,11 @@ class TaskDialog(QDialog):
         self.note_input.setPlainText(task.note)
         self.subitems_list.clear()
         for sub in task.subitems:
-            self.subitems_list.addItem(f"{'[x] ' if sub.completed else '[ ] '}{sub.title} ({sub.status.value})")
-        self.subitems_group.setVisible(bool(task.subitems))
+            item = self.subitems_list.addItem(f"{'[x] ' if sub.completed else '[ ] '}{sub.title} ({sub.status.value})")
+            self.subitems_list.item(self.subitems_list.count() - 1).setData(Qt.ItemDataRole.UserRole, sub.id)
+        self.add_subitem_button.setEnabled(self._api_client is not None)
+        self.toggle_subitem_button.setEnabled(self._api_client is not None)
+        self.delete_subitem_button.setEnabled(self._api_client is not None)
         self.history_list.clear()
         for entry in task.history:
             old = entry.old_status.value if entry.old_status else "—"
@@ -157,3 +177,41 @@ class TaskDialog(QDialog):
         if value is None:
             return None
         return value.replace(microsecond=0)
+
+    def _selected_subitem_id(self) -> int | None:
+        item = self.subitems_list.currentItem()
+        if not item:
+            return None
+        value = item.data(Qt.ItemDataRole.UserRole)
+        return int(value) if value else None
+
+    def _reload_task(self) -> None:
+        if self._task and self._api_client:
+            self._task = self._api_client.get_task(self._task.id)
+            self.populate(self._task)
+
+    def _add_subitem(self) -> None:
+        if not self._task or not self._api_client:
+            return
+        title = self.subitem_title_input.text().strip()
+        if not title:
+            return
+        self._api_client.add_subitem(self._task.id, TaskSubItemCreate(title=title))
+        self.subitem_title_input.clear()
+        self._reload_task()
+
+    def _toggle_subitem(self) -> None:
+        if not self._task or not self._api_client:
+            return
+        subitem_id = self._selected_subitem_id()
+        if subitem_id:
+            self._api_client.toggle_subitem(self._task.id, subitem_id)
+            self._reload_task()
+
+    def _delete_subitem(self) -> None:
+        if not self._task or not self._api_client:
+            return
+        subitem_id = self._selected_subitem_id()
+        if subitem_id:
+            self._api_client.delete_subitem(self._task.id, subitem_id)
+            self._reload_task()

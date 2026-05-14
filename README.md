@@ -5,7 +5,7 @@
 - A Linux-deployable FastAPI server with SQLite persistence
 - Task CRUD, subitems, status history, and calendar aggregation APIs
 - Billing CSV import, normalization, dedupe/merge, fallback categorization, and monthly summaries
-- A Windows/Linux PySide6 desktop client with calendar styles, opacity controls, task popups, finance views, and connection config
+- A Windows/Linux PySide6 desktop client with task filters/actions, calendar styles, date popups, finance views, and connection config
 - Agent-facing task and finance skill wrappers
 - Unit, integration, and offscreen UI tests
 
@@ -15,9 +15,11 @@
 pyproject.toml
 README.md
 DEPLOYMENT.md
-requirements.md
-design.md
-tasks.md
+specification/requirements.md
+specification/design.md
+specification/tasks.md
+Dockerfile
+docker-compose.yml
 scripts/generate_certs.py
 scripts/validate_security.py
 certs/
@@ -34,6 +36,9 @@ Key packages:
 - `src/personal_task_station/skills/`: agent-facing wrappers and CLIs
 - `scripts/generate_certs.py`: self-signed CA / server / client certificate generator
 - `scripts/validate_security.py`: end-to-end security validation script
+- `scripts/deploy-linux-server.sh`: repeatable Docker Compose server deployment helper
+- `scripts/package-linux-client.sh`: Linux PyInstaller client package helper with source fallback
+- `scripts/package-windows-client.ps1`: Windows PyInstaller client package helper
 
 For production deployment instructions, see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
@@ -104,11 +109,22 @@ export PTS_LITELLM_API_KEY="..."
 
 Security notes:
 
-- **HTTP is rejected.** The desktop client and skill wrappers require HTTPS only.
+- **HTTP is rejected except explicit localhost development.** Enable “Allow local HTTP for development” only for `localhost`/`127.0.0.1`.
 - Provide `PTS_SERVER_CERT_PATH` so clients can verify a self-signed server certificate.
 - When `PTS_SSL_CAFILE` is set, the server enforces mTLS and rejects clients without a valid certificate.
 - The desktop client and skill wrappers do not silently ignore TLS errors.
-- Local `http://127.0.0.1` development is no longer supported; use HTTPS even for localhost.
+- Production deployments should use HTTPS and a long random API key.
+
+## Docker server deployment
+
+For a local Linux Docker/Compose deployment:
+
+```bash
+scripts/deploy-linux-server.sh --api-key "change-this-long-random-token" --port 8000
+curl -H "X-API-Key: change-this-long-random-token" http://127.0.0.1:8000/health
+```
+
+The compose service reads `PTS_API_KEY`, `PTS_PORT`, `PTS_DATA_DIR`, and optional TLS paths from `.env`.
 
 ## Run the server
 
@@ -122,8 +138,12 @@ The server exposes:
 - `GET/POST/PATCH/DELETE /tasks`
 - `POST /tasks/{id}/status`
 - `POST /tasks/{id}/subitems`
+- `PATCH/DELETE /tasks/{id}/subitems/{subitem_id}`
+- `POST /tasks/{id}/subitems/{subitem_id}/toggle`
+- `POST /tasks/{id}/subitems/reorder`
 - `GET /tasks/{id}/history`
 - `GET /tasks/calendar/summary`
+- `GET /tasks/calendar/month`
 - `POST /billing/import`
 - `GET /billing/transactions`
 - `GET /billing/summary/monthly`
@@ -145,11 +165,28 @@ Client capabilities in this MVP:
 
 - Month, week, and compact calendar modes
 - Calendar day markers based on aggregated task status
+- Task list filters for all/today/this week/this month, status, and keyword
+- Task create/edit/delete, status changes, subitem add/delete/toggle, and status history display
 - Adjustable opacity and always-on-top behavior
-- Date popup for daily tasks
-- Task create/edit dialog
+- Date popup for daily tasks with quick add/edit/status switching
 - Finance summary and transaction list views
 - Connection configuration with API key and certificate path fields
+
+## Package desktop clients
+
+```bash
+scripts/package-linux-client.sh --dry-run
+scripts/package-linux-client.sh --output-dir dist/linux-client
+```
+
+On Windows PowerShell, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-windows-client.ps1 -DryRun
+powershell -ExecutionPolicy Bypass -File scripts\package-windows-client.ps1 -OutputDir dist\windows-client
+```
+
+Windows packaging must run on a Windows host or CI runner so PyInstaller can create `pts-client.exe`.
 
 ## Import sample billing data
 

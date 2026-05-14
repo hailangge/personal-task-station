@@ -6,7 +6,8 @@ from enum import Enum
 class TaskStatus(str, Enum):
     SCHEDULED = "scheduled"
     IN_PROGRESS = "in_progress"
-    ON_HOLD = "on_hold"
+    BLOCKED = "blocked"
+    ON_HOLD = "blocked"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
 
@@ -33,4 +34,3 @@ class MergeStatus(str, Enum):
     UNMERGED = "unmerged"
     MERGED = "merged"
     UNDONE = "undone"
-

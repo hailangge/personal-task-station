@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.local
+*.sqlite3
+*.egg-info
+dist
+build
+tests
+.env
+*.pem
+*.key
+*.crt
+research
