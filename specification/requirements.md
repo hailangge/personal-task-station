@@ -2,21 +2,24 @@
 
 ## 1. 本轮目标与范围
 
-本轮优先级调整为 **任务管理 + 日历视图 + 部署交付**。账单/财务功能保持现有能力，不继续扩展；除解除测试或耦合阻塞外，不新增财务功能。
+本轮优先级调整为 **可用个人小桌面 MVP**：在既有任务管理、日历视图和 SQLite 服务能力基础上，保证桌面客户端可启动、可连接、可操作，并补齐以手动 CSV/样例导入为边界的财务/交易处理闭环。邮件/银行自动化只保留为可选实验能力，不作为 MVP 验收承诺；若无法稳定完成，必须在文档中降级为手动导入边界。
 
 必须交付：
 1. 完整可用的服务端任务管理能力。
 2. 面向日历视图的日期/月份聚合接口。
 3. 客户端任务 UI 与日历视图主流程。
-4. Linux 服务端 Docker/Compose 部署能力。
-5. Linux 部署/打包脚本与 Windows 客户端部署/打包脚本；Windows 优先采用可落地的 PyInstaller 免装 Python 交付方案。
-6. 与上述范围一致的测试与文档。
+4. 最小可用财务/交易循环：CSV 导入、规范化、分类摘要、交易列表、月度汇总、重复合并检测与撤销。
+5. Linux host-based 服务启动能力作为推荐路径。
+6. Docker Compose 作为备用部署路径。
+7. 操作者可直接使用的环境模板、host 启动脚本、systemd user service 模板、health/API smoke 脚本、local/LAN/remote 访问文档。
+8. Linux/Windows 客户端部署/打包脚本保持可用；Windows 优先采用可落地的 PyInstaller 免装 Python 交付方案。
+9. 与上述范围一致的测试与文档。
 
 ## 2. 功能需求
 
 ### 2.1 服务端任务管理
 
-任务字段至少包括：`id`、`title`、`description`、`scheduled_date`、`start_time`、`due_time`、`status`、`priority`、`tags`、`is_pinned`、`notes`、`created_at`、`updated_at`。
+任务字段至少包括：`id`、`title`、`description`、`scheduled_date`、`start_time`、`due_time`、`status`、`priority`、`tags`、`is_pinned`、`notes`、`created_at`、`updated_at`。API 兼容既有内部字段名 `task_date`、`start_at`、`due_at`、`note`；创建/编辑可传入任一命名，响应同时包含公开字段名与内部兼容字段名。`priority` 输出保持 `1`-`5` 整数，输入兼容整数、数字字符串以及 `critical`、`high`、`medium`、`normal`、`low`、`lowest`。
 
 任务状态必须支持：
 - `scheduled`（预约）
@@ -67,7 +70,47 @@
 
 UI 在无 PySide6 或无图形环境时应保持可测试的非 GUI 逻辑；自动化测试可聚焦 widget/view-model 行为。
 
-### 2.4 部署交付
+### 2.4 财务/交易处理 MVP
+
+财务能力以 **手动导入优先** 为边界，必须支持：
+- 从 CSV/TSV 类交易导出文件导入；样例文件 `fixtures/sample_transactions.csv` 可作为验收输入。
+- 字段别名规范化，至少识别日期、金额、收支方向、商户、来源、外部订单号、备注、卡号尾号。
+- 基于规则的分类建议与最终分类，外部模型分类失败时回退到规则分类。
+- 按月份查询交易列表。
+- 生成月度汇总：总支出、总收入、按分类/来源/账户统计、重复交易、异常大额支出。
+- 对疑似重复交易进行合并展示，允许撤销某个重复合并并重新计算汇总。
+- 桌面 Finance tab 可加载月度摘要、显示交易和重复项、触发 CSV 导入、重新分析、撤销选中重复项。
+- Finance skill/API 可执行同等核心动作，便于 smoke 与 agent 使用。
+
+边界要求：
+- 邮件导入、银行/API 自动抓取和外部支付平台直连不作为本轮可靠主路径；保留现有实现时必须在文档中标注为可选/实验，不得宣称自动化账单闭环已完成。
+- 若某个 provider/parser 存在风险，应隔离或文档化，不覆盖可用 CSV 主路径。
+
+### 2.5 部署交付与访问
+
+#### 推荐访问模型
+
+必须明确并实现最简单可靠的访问计划：
+- 推荐主路径：Linux host-based service，默认绑定 `127.0.0.1:8000`。
+- LAN/私有 VPN：通过 `PTS_HOST`/`PTS_PORT` 配置绑定 `0.0.0.0` 或指定 LAN IP，并使用 API Key；同时文档要求防火墙/VPN 限制来源。
+- 公网访问：不建议直接暴露 Uvicorn/app 端口；推荐使用反向代理或隧道作为外部 HTTPS 层。
+- Docker Compose：作为备用部署路径，保持可构建、可配置、可健康检查。
+- HTTPS/mTLS：作为可选能力保留并文档化，不作为本轮主路径强制项。
+
+所有非 health 的应用 API 必须使用 `X-API-Key`。客户端必须给出清晰的连接配置说明：本机 HTTP 只允许显式 localhost 开发/本机使用；LAN/远程桌面客户端推荐 HTTPS 代理/隧道或直接 TLS。
+
+#### Host-based 服务部署
+
+必须包含：
+- `.env.example` 操作者环境模板。
+- host 启动脚本，支持准备目录、生成/读取配置、安装缺失依赖、迁移数据库、启动服务。
+- smoke test 脚本，至少验证 `/health`、认证任务列表、创建/读取/删除临时任务。
+- systemd user service 模板或等价 deploy helper。
+- local 与 LAN 访问地址、客户端连接、health/API smoke 命令文档。
+
+脚本必须可重复执行；存在配置时不得无提示覆盖敏感配置；适合的脚本需支持 `--dry-run`。
+
+#### Docker 服务端部署
 
 #### Docker 服务端部署
 
@@ -77,7 +120,7 @@ UI 在无 PySide6 或无图形环境时应保持可测试的非 GUI 逻辑；自
 - entrypoint 或等价启动脚本
 - `.dockerignore`
 - 文档说明
-- 最小可验证运行路径：构建镜像、启动服务、健康检查/API 验证。
+- 最小可验证运行路径：构建镜像、启动服务、健康检查/API smoke 验证。
 
 容器内服务端应支持通过环境变量配置：
 - 数据库路径
@@ -88,7 +131,9 @@ UI 在无 PySide6 或无图形环境时应保持可测试的非 GUI 逻辑；自
 #### Linux 脚本
 
 必须提供可执行脚本：
-- Linux 服务端部署脚本，能准备目录、配置环境、构建/启动 Docker Compose。
+- Linux host 服务启动脚本，能准备目录、配置环境、安装依赖、迁移数据库、启动服务。
+- Linux smoke test 脚本，能对运行中的服务执行 health/API 验证。
+- Linux Docker Compose 部署脚本，能准备目录、配置环境、构建/启动 Docker Compose。
 - Linux 客户端或项目打包脚本，能在 Linux 上生成可分发产物或明确完成本机安装包/压缩包。
 
 #### Windows 客户端脚本
@@ -100,11 +145,13 @@ UI 在无 PySide6 或无图形环境时应保持可测试的非 GUI 逻辑；自
 
 ## 3. 非功能与边界
 
-- 不继续扩展账单、邮件导入或财务分析范围。
+- 财务/交易 MVP 的可靠范围是 CSV/TSV 手动导入和本地 SQLite 处理；邮件/银行自动化为可选实验能力。
 - API 错误返回应清晰，关键输入需校验。
 - SQLite 为默认存储。
+- 默认访问边界为本机或私有网络；公网访问必须经外部 HTTPS 反向代理/隧道等安全层。
 - 保持现有测试通过。
 - 新增部署脚本应可重复执行且具备基本错误处理。
+- 新增部署脚本应支持 dry-run 或等价静态验证路径。
 - 不在本轮直接推送远端；完成后交接给 github-assistant 提交推送。
 
 ## 4. 验收标准
@@ -113,6 +160,7 @@ UI 在无 PySide6 或无图形环境时应保持可测试的非 GUI 逻辑；自
 - 任务管理服务端主流程可通过单元/集成测试验证。
 - 日历聚合接口与客户端日历标记可通过测试验证。
 - 客户端任务 UI 的主要交互路径有自动化测试或可运行 smoke 验证。
-- Docker 部署文件齐全，并在当前 Linux 环境完成最小验证（至少配置检查/构建或可解释的受限验证）。
+- Host-based 推荐部署路径齐全：环境模板、启动脚本、systemd user service 模板、smoke test、local/LAN/remote 访问文档。
+- Docker 备用部署文件齐全，并在当前 Linux 环境完成最小验证（至少配置检查/构建或可解释的受限验证）。
 - Linux/Windows 部署脚本存在、可读、具备执行说明；Linux 脚本在当前环境完成语法或 dry-run 验证。
-- Kimi 独立复核任务主流程、日历 UI/接口、Docker 部署、Linux/Windows 打包脚本并留下结论。
+- 部署资产测试覆盖存在性、可执行位、dry-run、脚本文本关键安全/访问行为。

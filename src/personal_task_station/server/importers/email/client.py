@@ -58,18 +58,33 @@ class EmailClient:
     def __exit__(self, *args) -> None:
         self.disconnect()
 
-    def fetch_unseen_since(self, since_date: date | None = None) -> list[FetchedEmail]:
+    def fetch_unseen_since(
+        self,
+        since_date: date | None = None,
+        ignore_seen: bool = False,
+        sender_filter: list[str] | None = None,
+    ) -> list[FetchedEmail]:
         if not self._conn:
             raise RuntimeError("Not connected")
         since = since_date or (date.today() - timedelta(days=30))
         since_str = since.strftime("%d-%b-%Y")
         self._conn.select(self.config.folder)
-        typ, data = self._conn.search(None, f'(UNSEEN SINCE "{since_str}")')
+        criteria = f'(SINCE "{since_str}")' if ignore_seen else f'(UNSEEN SINCE "{since_str}")'
+        typ, data = self._conn.search(None, criteria)
         if typ != "OK" or not data[0]:
             return []
         uids = data[0].split()
         emails: list[FetchedEmail] = []
         for uid in uids:
+            # Cheap header-only fetch first to filter by sender
+            if sender_filter:
+                typ2, hdr = self._conn.fetch(uid, "(BODY[HEADER.FIELDS (FROM)])")
+                if typ2 != "OK" or not hdr:
+                    continue
+                raw_hdr = hdr[0][1] if isinstance(hdr[0], tuple) else b""
+                from_val = str(email.message_from_bytes(raw_hdr).get("From", ""))
+                if not any(s in from_val for s in sender_filter):
+                    continue
             typ, msg_data = self._conn.fetch(uid, "(RFC822)")
             if typ != "OK" or not msg_data:
                 continue
@@ -128,7 +143,10 @@ class EmailClient:
         result = []
         for part, charset in parts:
             if isinstance(part, bytes):
-                result.append(part.decode(charset or "utf-8", errors="replace"))
+                try:
+                    result.append(part.decode(charset or "utf-8", errors="replace"))
+                except (LookupError, UnicodeDecodeError):
+                    result.append(part.decode("utf-8", errors="replace"))
             else:
                 result.append(part)
         return "".join(result)

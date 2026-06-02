@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import io
 import re
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from bs4 import BeautifulSoup
 
@@ -25,22 +26,151 @@ class CmbEmailParser(EmailParserBase):
 
     def parse(self, email: FetchedEmail, since_date: date | None = None) -> ImportResult:
         result = ImportResult(source_name=self.source_name)
-        text = self._extract_text(email)
-        if not text:
-            result.errors.append("Empty email body")
-            return result
 
-        # Try to parse HTML tables first
+        # 1. PDF attachment (monthly statement from CMB email)
+        for filename, payload in email.attachments:
+            fname = self._decode_filename(filename)
+            if fname.lower().endswith(".pdf"):
+                transactions = self._parse_pdf_attachment(payload, since_date)
+                if transactions:
+                    result.raw_transactions.extend(transactions)
+                    return result
+                result.errors.append(f"PDF attachment '{fname}' parsed 0 rows")
+
+        # 2. Excel attachment (App manual export)
+        for filename, payload in email.attachments:
+            fname = self._decode_filename(filename)
+            if fname.lower().endswith((".xlsx", ".xls")):
+                transactions = self._parse_excel_attachment(payload, since_date)
+                if transactions:
+                    result.raw_transactions.extend(transactions)
+                    return result
+                result.errors.append(f"Excel attachment '{fname}' parsed 0 rows")
+
+        # 3. HTML table (inline notification email)
         if email.body_html:
             transactions = self._parse_html_table(email.body_html, since_date)
             if transactions:
                 result.raw_transactions.extend(transactions)
                 return result
 
-        # Fallback: parse text format
+        # 4. Fallback: plain text
+        text = self._extract_text(email)
+        if not text:
+            result.errors.append("Empty email body")
+            return result
         transactions = self._parse_text_format(text, since_date)
         result.raw_transactions.extend(transactions)
         return result
+
+    def _decode_filename(self, filename: str) -> str:
+        from email.header import decode_header
+        parts = decode_header(filename)
+        result = []
+        for p, cs in parts:
+            if isinstance(p, bytes):
+                try:
+                    result.append(p.decode(cs or "utf-8", errors="replace"))
+                except (LookupError, UnicodeDecodeError):
+                    result.append(p.decode("utf-8", errors="replace"))
+            else:
+                result.append(str(p))
+        return "".join(result)
+
+    def _parse_pdf_attachment(self, payload: bytes, since_date: date | None) -> list[RawTransaction]:
+        try:
+            import io
+            import pdfplumber
+        except ImportError:
+            return []
+
+        transactions: list[RawTransaction] = []
+        # CMB PDF columns: 交易日, 记账日, 交易摘要, 人民币金额, 卡号末四位, 交易地金额
+        with pdfplumber.open(io.BytesIO(payload)) as pdf:
+            for page in pdf.pages:
+                for table in page.extract_tables():
+                    for row in table:
+                        if not row or len(row) < 4:
+                            continue
+                        # Skip header rows
+                        cell0 = str(row[0] or "").strip()
+                        if not cell0 or any(kw in cell0 for kw in ["交易日", "Trans", "Date"]):
+                            continue
+                        # row: [trans_date, post_date, description, rmb_amount, card_last4, orig_amount]
+                        trans_date_str = cell0
+                        description = str(row[2] or "").strip() if len(row) > 2 else ""
+                        amount_str = str(row[3] or "").strip() if len(row) > 3 else ""
+                        card_last4 = str(row[4] or "").strip() if len(row) > 4 else ""
+
+                        if not trans_date_str or not amount_str:
+                            continue
+
+                        # Parse date (format: MM/DD)
+                        occurred_on = self._parse_date(trans_date_str)
+                        if not occurred_on:
+                            continue
+                        if since_date and occurred_on < since_date:
+                            continue
+
+                        # Parse amount
+                        amt_clean = amount_str.replace(",", "").replace(" ", "")
+                        direction = BillDirection.EXPENSE
+                        if amt_clean.startswith("-"):
+                            direction = BillDirection.INCOME  # repayment / credit
+                            amt_clean = amt_clean[1:]
+                        try:
+                            amount = Decimal(amt_clean)
+                        except InvalidOperation:
+                            continue
+                        if amount <= 0:
+                            continue
+
+                        transactions.append(RawTransaction(
+                            source_name=self.source_name,
+                            occurred_on=occurred_on,
+                            amount=amount,
+                            direction=direction,
+                            merchant_name=description or "未知商户",
+                            channel="cmb_pdf",
+                            card_last4=card_last4,
+                            raw_data={"row": [str(c) for c in row]},
+                        ))
+        return transactions
+
+    def _parse_excel_attachment(self, payload: bytes, since_date: date | None) -> list[RawTransaction]:
+        try:
+            import openpyxl
+        except ImportError:
+            return []
+
+        transactions: list[RawTransaction] = []
+        wb = openpyxl.load_workbook(io.BytesIO(payload), read_only=True, data_only=True)
+        for ws in wb.worksheets:
+            rows = list(ws.iter_rows(values_only=True))
+            if len(rows) < 2:
+                continue
+            # Find header row (first row containing date/amount keywords)
+            header_idx = None
+            for i, row in enumerate(rows[:10]):
+                row_text = "".join(str(c) for c in row if c is not None)
+                if any(kw in row_text for kw in ["交易时间", "记账时间", "交易日期", "金额", "交易金额"]):
+                    header_idx = i
+                    break
+            if header_idx is None:
+                continue
+            headers = [str(c).strip() if c is not None else "" for c in rows[header_idx]]
+            col_map = self._map_headers(headers)
+            for row in rows[header_idx + 1:]:
+                cells = [str(c).strip() if c is not None else "" for c in row]
+                if not any(cells):
+                    continue
+                try:
+                    tx = self._row_to_transaction(cells, col_map)
+                    if tx and (since_date is None or tx.occurred_on >= since_date):
+                        transactions.append(tx)
+                except Exception:
+                    continue
+        return transactions
 
     def _parse_html_table(self, html: str, since_date: date | None) -> list[RawTransaction]:
         soup = BeautifulSoup(html, "lxml")

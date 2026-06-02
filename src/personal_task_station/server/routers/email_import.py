@@ -62,7 +62,12 @@ def delete_account(account_id: int, session: Session = Depends(get_db)) -> None:
 
 
 @router.get("/accounts/{account_id}/preview", response_model=list[EmailImportPreview])
-def preview_emails(account_id: int, session: Session = Depends(get_db)) -> list[EmailImportPreview]:
+def preview_emails(
+    account_id: int,
+    since_date: date | None = None,
+    ignore_seen: bool = False,
+    session: Session = Depends(get_db),
+) -> list[EmailImportPreview]:
     account = session.get(EmailAccount, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -77,7 +82,8 @@ def preview_emails(account_id: int, session: Session = Depends(get_db)) -> list[
     )
     try:
         service = EmailImportService(config)
-        emails = service.preview_emails(since_date=date.today() - timedelta(days=30))
+        since = since_date or (date.today() - timedelta(days=30))
+        emails = service.preview_emails(since_date=since, ignore_seen=ignore_seen)
         return [
             EmailImportPreview(uid=e.uid, subject=e.subject, from_addr=e.from_addr, date=e.date)
             for e in emails
@@ -90,6 +96,7 @@ def preview_emails(account_id: int, session: Session = Depends(get_db)) -> list[
 def import_from_email(
     account_id: int,
     since_date: date | None = None,
+    ignore_seen: bool = False,
     session: Session = Depends(get_db),
 ) -> ImportJobRead:
     account = session.get(EmailAccount, account_id)
@@ -109,7 +116,9 @@ def import_from_email(
 
     try:
         service = EmailImportService(config)
-        results = service.import_from_email(since_date=since_date, mark_seen=True)
+        results = service.import_from_email(
+            since_date=since_date, mark_seen=True, ignore_seen=ignore_seen
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -149,6 +158,80 @@ def import_from_email(
 
     session.refresh(import_job)
     return ImportJobRead.model_validate(import_job)
+
+
+@router.post("/sync", response_model=list[ImportJobRead])
+def sync_all_accounts(
+    since_date: date | None = None,
+    session: Session = Depends(get_db),
+) -> list[ImportJobRead]:
+    """Sync all active email accounts for new transactions.
+
+    Skips accounts whose last import was within the past hour to avoid hammering IMAP.
+    """
+    from datetime import datetime, timezone
+
+    accounts = (
+        session.query(EmailAccount)
+        .filter(EmailAccount.is_active == True)  # noqa: E712
+        .all()
+    )
+
+    jobs: list[ImportJobRead] = []
+    for account in accounts:
+        # Throttle: skip if imported less than 60 minutes ago
+        if account.last_import_at:
+            age_minutes = (datetime.now(timezone.utc) - account.last_import_at.replace(tzinfo=timezone.utc)).total_seconds() / 60
+            if age_minutes < 60:
+                continue
+
+        config = ImapConfig(
+            host=account.imap_host,
+            port=account.imap_port,
+            username=account.username,
+            password=account.password,
+            folder=account.folder,
+            use_ssl=account.use_ssl,
+        )
+        try:
+            service = EmailImportService(config)
+            results = service.import_from_email(since_date=since_date, mark_seen=True)
+        except Exception as exc:
+            # Log failure but continue with other accounts
+            import logging
+            logging.getLogger(__name__).warning("Email sync failed for account %d: %s", account.id, exc)
+            continue
+
+        import_job = _billing_service(session).create_import_job(
+            source_name=f"email:{account.name}",
+            filename="email_import",
+        )
+        for result in results:
+            for tx in result.raw_transactions:
+                _billing_service(session).add_raw_transaction_from_email(import_job.id, tx)
+
+        _billing_service(session).normalize_transactions(import_job.id)
+        _billing_service(session).merge_and_classify(import_job.id)
+
+        from personal_task_station.shared.models import utcnow
+        account.last_import_at = utcnow()
+        session.commit()
+
+        for result in results:
+            log = EmailImportLog(
+                email_account_id=account.id,
+                email_uid="batch",
+                parser_used=result.source_name,
+                transaction_count=len(result.raw_transactions),
+                error_message="; ".join(result.errors) if result.errors else "",
+            )
+            session.add(log)
+        session.commit()
+
+        session.refresh(import_job)
+        jobs.append(ImportJobRead.model_validate(import_job))
+
+    return jobs
 
 
 @router.get("/accounts/{account_id}/logs", response_model=list[dict])

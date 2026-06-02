@@ -1,0 +1,15 @@
+[Unit]
+Description=Personal Task Station host server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/personal-task-station
+EnvironmentFile=%h/personal-task-station/.env.host
+ExecStart=%h/personal-task-station/.venv/bin/pts-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

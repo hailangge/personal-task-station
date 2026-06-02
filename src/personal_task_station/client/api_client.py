@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import date
+from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -14,6 +15,7 @@ from personal_task_station.shared.schemas import (
     EmailAccountRead,
     EmailImportResult,
     ImportJobRead,
+    MergedTransactionRead,
     MonthlySummary,
     NormalizedTransactionRead,
     TaskCreate,
@@ -30,14 +32,26 @@ from personal_task_station.shared.schemas import (
 def build_verify_setting(config: ConnectionConfig):
     parsed = urlparse(config.base_url)
     if parsed.scheme == "http":
-        if config.allow_insecure_localhost and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+        if config.allow_insecure_localhost and _is_private_http_host(parsed.hostname):
             return True
         raise ValueError(
-            "HTTPS is required unless local HTTP is explicitly enabled for localhost."
+            "HTTPS is required unless HTTP is explicitly enabled for localhost or private-network hosts."
         )
     if config.server_cert_path:
         return str(Path(config.server_cert_path))
     return config.verify_tls
+
+
+def _is_private_http_host(hostname: str | None) -> bool:
+    if hostname in ("localhost", "127.0.0.1", "::1"):
+        return True
+    if not hostname:
+        return False
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        return hostname.endswith(".local")
+    return address.is_loopback or address.is_private or address.is_link_local
 
 
 def build_cert_setting(config: ConnectionConfig):
@@ -190,11 +204,11 @@ class ServerApiClient:
             response.raise_for_status()
             return ImportJobRead.model_validate(response.json())
 
-    def list_duplicates(self):
+    def list_duplicates(self) -> list[MergedTransactionRead]:
         with self._client() as client:
             response = client.get("/billing/duplicates")
             response.raise_for_status()
-            return response.json()
+            return [MergedTransactionRead.model_validate(item) for item in response.json()]
 
     def reanalyze(self, import_job_id: int | None = None) -> dict:
         with self._client() as client:

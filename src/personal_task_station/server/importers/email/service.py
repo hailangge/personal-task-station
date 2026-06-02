@@ -7,6 +7,7 @@ from personal_task_station.server.importers.email.client import EmailClient, Fet
 from personal_task_station.server.importers.email.parser_base import EmailParserBase
 from personal_task_station.server.importers.email.parsers import (
     AlipayEmailParser,
+    BankcommEmailParser,
     CmbEmailParser,
     GenericNotificationParser,
     JdEmailParser,
@@ -21,6 +22,7 @@ class EmailImportService:
 
     PARSERS: list[type[EmailParserBase]] = [
         CmbEmailParser,
+        BankcommEmailParser,
         AlipayEmailParser,
         WechatEmailParser,
         JdEmailParser,
@@ -36,16 +38,21 @@ class EmailImportService:
         self,
         since_date: date | None = None,
         mark_seen: bool = True,
+        ignore_seen: bool = False,
     ) -> list[ImportResult]:
-        """Fetch unseen emails since *since_date* and parse transactions.
+        """Fetch emails since *since_date* and parse transactions.
 
+        Set ignore_seen=True to re-process already-read emails.
         Returns one ImportResult per email that matched a parser.
         """
         since = since_date or (date.today() - timedelta(days=30))
         results: list[ImportResult] = []
 
+        # Only download emails from known sender domains when re-importing all mail
+        sender_filter = self._all_sender_patterns() if ignore_seen else None
+
         with EmailClient(self.config) as client:
-            emails = client.fetch_unseen_since(since)
+            emails = client.fetch_unseen_since(since, ignore_seen=ignore_seen, sender_filter=sender_filter)
             for email in emails:
                 parser = self._find_parser(email)
                 if parser is None:
@@ -57,11 +64,13 @@ class EmailImportService:
                     client.mark_seen(email.uid)
         return results
 
-    def preview_emails(self, since_date: date | None = None) -> list[FetchedEmail]:
-        """Fetch unseen emails without marking them as read or parsing."""
+    def preview_emails(
+        self, since_date: date | None = None, ignore_seen: bool = False
+    ) -> list[FetchedEmail]:
+        """Fetch emails without marking them as read or parsing."""
         since = since_date or (date.today() - timedelta(days=30))
         with EmailClient(self.config) as client:
-            return client.fetch_unseen_since(since)
+            return client.fetch_unseen_since(since, ignore_seen=ignore_seen)
 
     def _find_parser(self, email: FetchedEmail) -> EmailParserBase | None:
         for parser_cls in self.PARSERS:
@@ -69,3 +78,9 @@ class EmailImportService:
             if parser.can_parse(email):
                 return parser
         return None
+
+    def _all_sender_patterns(self) -> list[str]:
+        patterns: list[str] = []
+        for cls in self.PARSERS:
+            patterns.extend(cls.sender_patterns)
+        return patterns

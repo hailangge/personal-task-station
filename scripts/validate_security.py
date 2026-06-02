@@ -220,7 +220,7 @@ def test_full_crud_over_https(port: int, ca_cert: Path, api_key: str) -> bool:
     try:
         # Create
         r = httpx.post(f"{base}/tasks", headers=headers, verify=verify, timeout=5.0, json={
-            "title": "Secure Task", "description": "Created over HTTPS", "task_date": "2026-04-23"
+            "title": "Secure Task", "description": "Created over HTTPS", "scheduled_date": "2026-04-23", "priority": "high"
         })
         if r.status_code != 201:
             return fail(f"Create failed: {r.status_code} {r.text}")

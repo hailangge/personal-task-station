@@ -3,9 +3,28 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from .enums import BillDirection, ImportJobStatus, MergeStatus, SubItemStatus, TaskStatus
+
+
+_TASK_PRIORITY_NAMES = {
+    "critical": 1,
+    "high": 2,
+    "medium": 3,
+    "normal": 3,
+    "low": 4,
+    "lowest": 5,
+}
+
+
+def _parse_task_priority(value):
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _TASK_PRIORITY_NAMES:
+            return _TASK_PRIORITY_NAMES[normalized]
+        return normalized
+    return value
 
 
 class TaskSubItemBase(BaseModel):
@@ -50,6 +69,11 @@ class TaskBase(BaseModel):
     is_pinned: bool = False
     note: str = ""
 
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _parse_priority(cls, value):
+        return _parse_task_priority(value)
+
     @model_validator(mode="before")
     @classmethod
     def _accept_spec_field_names(cls, data):
@@ -83,6 +107,11 @@ class TaskUpdate(BaseModel):
     tags: list[str] | None = None
     is_pinned: bool | None = None
     note: str | None = None
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _parse_priority(cls, value):
+        return _parse_task_priority(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -248,11 +277,17 @@ class ConnectionConfig(BaseModel):
 
 
 class DesktopPreferences(BaseModel):
-    opacity: float = Field(default=0.92, ge=0.2, le=1.0)
+    opacity: float = Field(default=0.82, ge=0.2, le=1.0)
     theme: str = "light"
+    main_background_color: str = Field(default="#334155", pattern=r"^#[0-9a-fA-F]{6}$")
+    calendar_background_color: str = Field(default="#334155", pattern=r"^#[0-9a-fA-F]{6}$")
+    calendar_border_color: str = Field(default="#64748b", pattern=r"^#[0-9a-fA-F]{6}$")
+    calendar_header_color: str = Field(default="#334155", pattern=r"^#[0-9a-fA-F]{6}$")
     calendar_mode: str = "month"
-    always_on_top: bool = False
-    compact_mode: bool = False
+    always_on_top: bool = True
+    compact_mode: bool = True
+    window_x: int | None = None
+    window_y: int | None = None
 
 
 class ModelCallLogRead(BaseModel):

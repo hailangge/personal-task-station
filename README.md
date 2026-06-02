@@ -2,7 +2,7 @@
 
 `personal-task-station` is a single-repo MVP that implements:
 
-- A Linux-deployable FastAPI server with SQLite persistence
+- A Linux-deployable FastAPI server with SQLite persistence and API-key protected access
 - Task CRUD, subitems, status history, and calendar aggregation APIs
 - Billing CSV import, normalization, dedupe/merge, fallback categorization, and monthly summaries
 - A Windows/Linux PySide6 desktop client with task filters/actions, calendar styles, date popups, finance views, and connection config
@@ -22,7 +22,10 @@ Dockerfile
 docker-compose.yml
 scripts/generate_certs.py
 scripts/validate_security.py
+scripts/run-host-server.sh
+scripts/smoke-test.sh
 certs/
+deploy/systemd/
 fixtures/
 src/personal_task_station/
 tests/
@@ -34,9 +37,12 @@ Key packages:
 - `src/personal_task_station/client/`: PySide6 desktop client
 - `src/personal_task_station/shared/`: shared enums, schemas, settings, and ORM models
 - `src/personal_task_station/skills/`: agent-facing wrappers and CLIs
+- `scripts/run-host-server.sh`: primary host-based server startup helper
+- `scripts/smoke-test.sh`: repeatable health/API smoke test helper
+- `scripts/deploy-linux-server.sh`: alternate Docker Compose server deployment helper
+- `deploy/systemd/personal-task-station.service`: systemd user service template
 - `scripts/generate_certs.py`: self-signed CA / server / client certificate generator
 - `scripts/validate_security.py`: end-to-end security validation script
-- `scripts/deploy-linux-server.sh`: repeatable Docker Compose server deployment helper
 - `scripts/package-linux-client.sh`: Linux PyInstaller client package helper with source fallback
 - `scripts/package-windows-client.ps1`: Windows PyInstaller client package helper
 
@@ -52,9 +58,15 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
-## Generate certificates (HTTPS / mTLS)
+## Access model
 
-The server **requires HTTPS** in production. Generate self-signed certificates:
+The recommended launch path is a host-based service bound to `127.0.0.1` for same-machine use, or a private LAN/VPN address when remote access is needed. All application APIs require `X-API-Key`; `/health` is public for operators and container health checks.
+
+Do **not** expose the app port directly to the public internet. Use a reverse proxy or private tunnel such as Caddy, nginx, Tailscale, or Cloudflare Tunnel for public/remote HTTPS. Direct server HTTPS and mTLS are optional when you prefer the app server to terminate TLS itself.
+
+## Generate certificates (optional HTTPS / mTLS)
+
+Generate self-signed certificates when using direct HTTPS/mTLS:
 
 ```bash
 .venv/bin/python scripts/generate_certs.py --output-dir certs --hostname localhost
@@ -109,13 +121,29 @@ export PTS_LITELLM_API_KEY="..."
 
 Security notes:
 
-- **HTTP is rejected except explicit localhost development.** Enable “Allow local HTTP for development” only for `localhost`/`127.0.0.1`.
+- The desktop client rejects HTTP unless explicit local/private-network HTTP is enabled. Use it only for `localhost`, loopback, RFC1918 LAN, link-local, or `.local` hosts.
 - Provide `PTS_SERVER_CERT_PATH` so clients can verify a self-signed server certificate.
 - When `PTS_SSL_CAFILE` is set, the server enforces mTLS and rejects clients without a valid certificate.
-- The desktop client and skill wrappers do not silently ignore TLS errors.
-- Production deployments should use HTTPS and a long random API key.
+- Production-like deployments should use a long random API key and a private network, reverse proxy, or tunnel boundary.
 
-## Docker server deployment
+## Host server deployment (recommended)
+
+```bash
+cp .env.example .env.host
+scripts/run-host-server.sh --dry-run
+scripts/run-host-server.sh --env-file .env.host
+```
+
+Smoke test from another terminal:
+
+```bash
+source .env.host
+scripts/smoke-test.sh --base-url "http://127.0.0.1:${PTS_PORT}" --api-key "$PTS_API_KEY"
+```
+
+Local address: `http://127.0.0.1:8000`. For LAN/private VPN, set `PTS_HOST=0.0.0.0` or the server LAN IP and connect to `http://<server-lan-ip>:8000` with the same API key. In the desktop client, enable “Allow HTTP for localhost/private LAN” for this explicit private-network HTTP mode.
+
+## Docker server deployment (alternate)
 
 For a local Linux Docker/Compose deployment:
 
@@ -153,6 +181,8 @@ The server exposes:
 
 All protected endpoints require `X-API-Key`.
 
+Task payloads accept both public/spec field names and internal legacy names: `scheduled_date`/`task_date`, `start_time`/`start_at`, `due_time`/`due_at`, and `notes`/`note`. Responses include both names for compatibility, and `priority` is always returned as an integer from 1 to 5. Create/update requests may send priority as an integer, a numeric string, or one of `critical`, `high`, `medium`, `normal`, `low`, or `lowest`.
+
 ## Run the desktop client
 
 The client stores configuration in `.local/client_settings.json` by default.
@@ -169,7 +199,7 @@ Client capabilities in this MVP:
 - Task create/edit/delete, status changes, subitem add/delete/toggle, and status history display
 - Adjustable opacity and always-on-top behavior
 - Date popup for daily tasks with quick add/edit/status switching
-- Finance summary and transaction list views
+- Finance CSV import, month summary, transaction list, duplicate review/undo, and reanalyze controls
 - Connection configuration with API key and certificate path fields
 
 ## Package desktop clients
@@ -189,6 +219,10 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows-client.ps1 -Out
 Windows packaging must run on a Windows host or CI runner so PyInstaller can create `pts-client.exe`.
 
 ## Import sample billing data
+
+The finance MVP is CSV-first: manually import transaction exports, then review normalized transactions, monthly summaries, duplicate groups, and undo any incorrect duplicate merge. External bank/email automation is optional/experimental and is not required for the reliable MVP path.
+
+From the desktop client, open the **Finance** tab, choose the month, set a source name such as `fixture`, click **Import CSV**, select a CSV file, then use **Load summary**, **Reanalyze**, or **Undo selected duplicate** as needed.
 
 Fixture file:
 

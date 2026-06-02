@@ -56,14 +56,21 @@ def main() -> None:
     create_parser = subparsers.add_parser("create")
     create_parser.add_argument("--title", required=True)
     create_parser.add_argument("--description", default="")
-    create_parser.add_argument("--task-date")
-    create_parser.add_argument("--priority", type=int, default=3)
+    create_parser.add_argument("--task-date", "--scheduled-date", dest="task_date")
+    create_parser.add_argument("--start-at", "--start-time", dest="start_at")
+    create_parser.add_argument("--due-at", "--due-time", dest="due_at")
+    create_parser.add_argument("--priority", default="3")
+    create_parser.add_argument("--note", "--notes", dest="note")
 
     update_parser = subparsers.add_parser("update")
     update_parser.add_argument("--task-id", type=int, required=True)
     update_parser.add_argument("--title")
     update_parser.add_argument("--description")
-    update_parser.add_argument("--note")
+    update_parser.add_argument("--task-date", "--scheduled-date", dest="task_date")
+    update_parser.add_argument("--start-at", "--start-time", dest="start_at")
+    update_parser.add_argument("--due-at", "--due-time", dest="due_at")
+    update_parser.add_argument("--priority")
+    update_parser.add_argument("--note", "--notes", dest="note")
 
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--task-id", type=int, required=True)
@@ -96,9 +103,27 @@ def main() -> None:
         }
         if args.task_date:
             payload["task_date"] = args.task_date
+        if args.start_at:
+            payload["start_at"] = args.start_at
+        if args.due_at:
+            payload["due_at"] = args.due_at
+        if args.note:
+            payload["note"] = args.note
         result = skill.create_task(**payload)
     elif args.command == "update":
-        payload = {key: value for key, value in {"title": args.title, "description": args.description, "note": args.note}.items() if value is not None}
+        payload = {
+            key: value
+            for key, value in {
+                "title": args.title,
+                "description": args.description,
+                "task_date": args.task_date,
+                "start_at": args.start_at,
+                "due_at": args.due_at,
+                "priority": args.priority,
+                "note": args.note,
+            }.items()
+            if value is not None
+        }
         result = skill.update_task(args.task_id, **payload)
     elif args.command == "status":
         result = skill.update_status(args.task_id, args.status, args.reason)

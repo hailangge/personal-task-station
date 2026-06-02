@@ -1,4 +1,7 @@
 .venv/
+.env
+.env.host
+.env.local
 .pytest_cache/
 .local/
 certs/

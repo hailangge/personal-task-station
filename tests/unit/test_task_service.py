@@ -2,10 +2,67 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+from pydantic import ValidationError
+
 from personal_task_station.server.services.tasks import TaskService
 from personal_task_station.shared.database import Base, get_engine, session_scope
 from personal_task_station.shared.enums import SubItemStatus, TaskStatus
-from personal_task_station.shared.schemas import TaskCreate, TaskSubItemCreate, TaskSubItemUpdate
+from personal_task_station.shared.schemas import TaskCreate, TaskSubItemCreate, TaskSubItemUpdate, TaskUpdate
+
+
+@pytest.mark.parametrize(
+    ("raw_priority", "expected"),
+    [
+        ("critical", 1),
+        ("high", 2),
+        ("medium", 3),
+        ("normal", 3),
+        ("low", 4),
+        ("lowest", 5),
+        ("5", 5),
+    ],
+)
+def test_task_schemas_accept_human_priority_values(raw_priority: str, expected: int):
+    assert TaskCreate(title="Priority", priority=raw_priority).priority == expected
+    assert TaskUpdate(priority=raw_priority).priority == expected
+
+
+@pytest.mark.parametrize("raw_priority", ["urgent", "", "6", "0"])
+def test_task_schemas_reject_invalid_priority_values(raw_priority: str):
+    with pytest.raises(ValidationError):
+        TaskCreate(title="Priority", priority=raw_priority)
+    with pytest.raises(ValidationError):
+        TaskUpdate(priority=raw_priority)
+
+
+def test_task_schema_aliases_round_trip_to_public_and_internal_names():
+    task = TaskCreate(
+        title="Aliases",
+        scheduled_date="2026-05-14",
+        start_time="2026-05-14T09:00:00",
+        due_time="2026-05-14T10:00:00",
+        notes="Public notes",
+    )
+    assert task.task_date == date(2026, 5, 14)
+    assert task.start_at is not None
+    assert task.start_at.isoformat() == "2026-05-14T09:00:00"
+    assert task.due_at is not None
+    assert task.due_at.isoformat() == "2026-05-14T10:00:00"
+    assert task.note == "Public notes"
+
+    update = TaskUpdate(
+        scheduled_date="2026-05-15",
+        start_time="2026-05-15T11:00:00",
+        due_time="2026-05-15T12:00:00",
+        notes="Updated",
+    )
+    assert update.task_date == date(2026, 5, 15)
+    assert update.start_at is not None
+    assert update.start_at.isoformat() == "2026-05-15T11:00:00"
+    assert update.due_at is not None
+    assert update.due_at.isoformat() == "2026-05-15T12:00:00"
+    assert update.note == "Updated"
 
 
 def test_task_service_syncs_status_with_subitems(database_url: str):

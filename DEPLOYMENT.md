@@ -1,426 +1,179 @@
-# Personal Task Station — Deployment Guide
+# Personal Task Station Deployment Guide
 
-## 1. Overview
+This project is production-ready for **personal or small-team operation** when it is run behind a trusted network boundary. The primary launch path is a host-based service on Linux. Docker Compose is kept as an alternate packaging path.
 
-This guide covers the secure deployment of the Personal Task Station server and desktop client on Linux. By default, **all communication is encrypted via HTTPS**. Optional mutual TLS (mTLS) can be enabled to restrict connections to hosts possessing a valid client certificate.
+## Recommended Access Plan
 
-## 2. Prerequisites
+- **Local only:** bind `PTS_HOST=127.0.0.1`, `PTS_PORT=8000`, then use `http://127.0.0.1:8000` with `X-API-Key`.
+- **LAN or private VPN:** bind `PTS_HOST=0.0.0.0` or a specific LAN IP and connect to `http://<server-lan-ip>:8000` with `X-API-Key`; restrict access with firewall/VPN rules.
+- **Public internet:** do not expose the app port directly. Put Caddy, nginx, Tailscale Funnel, Cloudflare Tunnel, or another hardened reverse proxy/tunnel in front and terminate HTTPS there.
+- **Direct HTTPS/mTLS:** optional. Set `PTS_SSL_CERTFILE` and `PTS_SSL_KEYFILE`; set `PTS_SSL_CAFILE` only when clients must present mTLS certificates.
 
-- Linux server (Ubuntu 22.04+, Debian 12+, or equivalent)
-- Python 3.12+
-- `openssl` CLI tool (for certificate inspection and debugging)
-- `curl` (for connection testing)
-- Firewall access to the configured server port (default 8000)
+The server requires an API key for all application APIs except `/health`. The desktop client intentionally blocks plain HTTP unless explicit local/private-network HTTP is enabled for loopback, RFC1918 LAN, link-local, or `.local` hosts.
 
-## 3. Install the Application
+## 1. Host-Based Service (Primary)
+
+### 1.1 Prepare Environment
 
 ```bash
-# Clone or copy the repository to the server
-cd /opt/personal-task-station
+cp .env.example .env.host
+$EDITOR .env.host
+```
+
+Minimum `.env.host` values:
+
+```bash
+PTS_API_KEY=replace-with-openssl-rand-hex-32
+PTS_HOST=127.0.0.1
+PTS_PORT=8000
+PTS_DATA_DIR=/home/pts/personal-task-station/.local/pts-data
+PTS_DATABASE_URL=sqlite:////home/pts/personal-task-station/.local/pts-data/personal_task_station.sqlite3
+```
+
+For LAN access, use one of:
+
+```bash
+PTS_HOST=0.0.0.0
+# or a specific interface address, for example:
+PTS_HOST=192.168.1.20
+```
+
+### 1.2 Dry Run
+
+```bash
+scripts/run-host-server.sh --dry-run
+```
+
+### 1.3 Start Server
+
+```bash
+scripts/run-host-server.sh --env-file .env.host
+```
+
+The script is idempotent. It creates the data directory, creates `.env.host` when missing, installs server dependencies into `.venv` when needed, runs Alembic migrations when available, and starts `pts-server`.
+
+### 1.4 Smoke Test
+
+In another terminal:
+
+```bash
+source .env.host
+scripts/smoke-test.sh --base-url "http://127.0.0.1:${PTS_PORT}" --api-key "$PTS_API_KEY"
+```
+
+Useful manual checks:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl -H "X-API-Key: $PTS_API_KEY" http://127.0.0.1:8000/tasks
+curl -H "X-API-Key: $PTS_API_KEY" -H "Content-Type: application/json" \
+  -d '{"title":"Alias check","scheduled_date":"2026-01-01","start_time":"2026-01-01T09:00:00","due_time":"2026-01-01T10:00:00","notes":"Public names","priority":"high"}' \
+  http://127.0.0.1:8000/tasks
+```
+
+Task create/update payloads accept `scheduled_date`/`task_date`, `start_time`/`start_at`, `due_time`/`due_at`, and `notes`/`note`. Responses include both names, while `priority` is normalized to integer `1`-`5` even when requests send labels such as `high` or numeric strings such as `"5"`.
+
+For LAN access from another device:
+
+```bash
+curl -H "X-API-Key: $PTS_API_KEY" http://<server-lan-ip>:8000/health
+curl -H "X-API-Key: $PTS_API_KEY" http://<server-lan-ip>:8000/tasks
+```
+
+## 2. systemd User Service
+
+Install the template after the host service has been prepared:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/personal-task-station.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now personal-task-station.service
+systemctl --user status personal-task-station.service
+```
+
+The template assumes this checkout lives at `~/personal-task-station`, uses `~/personal-task-station/.env.host`, and runs `~/personal-task-station/.venv/bin/pts-server`. Edit those paths if your deployment directory differs.
+
+To start the service on login-less servers:
+
+```bash
+loginctl enable-linger "$USER"
+```
+
+## 3. Docker Compose (Alternate)
+
+Docker Compose is useful when an operator wants container isolation. It is not the primary recommendation for this small SQLite-backed service.
+
+```bash
+cp .env.example .env
+$EDITOR .env
+scripts/deploy-linux-server.sh --dry-run
+scripts/deploy-linux-server.sh --api-key "$PTS_API_KEY" --port 8000
+scripts/smoke-test.sh --base-url http://127.0.0.1:8000 --api-key "$PTS_API_KEY"
+```
+
+The Compose service stores SQLite data under `PTS_DATA_DIR` and publishes `PTS_PORT` on the host. The container listens on `0.0.0.0:8000` internally.
+
+## 4. Desktop Client Connection
+
+Install and launch locally:
+
+```bash
 python -m venv .venv
 . .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[client]"
+pts-client
 ```
 
-## 4. Certificate Generation
+Connection settings:
 
-### 4.1 Understanding the Certificate Architecture
+| Scenario | Server URL | Required options |
+| --- | --- | --- |
+| Same machine | `http://127.0.0.1:8000` | Enable “Allow local HTTP for development” |
+| LAN/VPN via direct HTTP | `http://<server-lan-ip>:8000` | API key; enable “Allow HTTP for localhost/private LAN” |
+| HTTPS proxy/tunnel | `https://<proxy-host>` | API key; custom CA path if self-signed |
+| Direct server HTTPS | `https://<server-host>:8443` | API key; `PTS_SERVER_CERT_PATH` if self-signed |
+| Direct mTLS | `https://<server-host>:8443` | API key, server CA, client certificate, client key |
 
-| File | Purpose | Distribution |
-|------|---------|-------------|
-| `ca-cert.pem` | Trust anchor for verifying server (and optionally client) certificates | **Deploy to every client** |
-| `ca-key.pem` | CA private key for signing new certificates | **Server only, keep secret** |
-| `server-cert.pem` + `server-key.pem` | Server's HTTPS identity | **Server only** |
-| `client-cert.pem` + `client-key.pem` | Client identity for mTLS | **Authorized clients only** |
-
-### 4.2 Generate Certificates
+Environment variables for client/skill wrappers:
 
 ```bash
-.venv/bin/python scripts/generate_certs.py \
-  --output-dir /etc/pts/certs \
-  --hostname your-server-hostname \
-  --client-name pts-client
+export PTS_SKILL_BASE_URL="https://<proxy-or-server>"
+export PTS_SKILL_API_KEY="<api-key>"
+export PTS_SERVER_CERT_PATH="$HOME/.pts/certs/ca-cert.pem"       # optional self-signed CA
+export PTS_CLIENT_CERT_PATH="$HOME/.pts/certs/client-cert.pem"   # optional mTLS
+export PTS_CLIENT_KEY_PATH="$HOME/.pts/certs/client-key.pem"     # optional mTLS
 ```
 
-Set appropriate permissions:
+## 5. HTTPS and mTLS
+
+Generate development/self-managed certificates:
 
 ```bash
-sudo chown -R pts:pts /etc/pts/certs
-sudo chmod 600 /etc/pts/certs/*-key.pem
-sudo chmod 644 /etc/pts/certs/*.pem
+python scripts/generate_certs.py --output-dir certs --hostname <server-host>
 ```
 
-> **Security Note**: Never commit private keys (`*-key.pem`) to version control. The repository `.gitignore` already excludes `certs/`.
-
-### 4.3 Verify Certificate Chain
+Set direct TLS on the server:
 
 ```bash
-openssl verify -CAfile /etc/pts/certs/ca-cert.pem /etc/pts/certs/server-cert.pem
-openssl verify -CAfile /etc/pts/certs/ca-cert.pem /etc/pts/certs/client-cert.pem
+PTS_SSL_CERTFILE=/absolute/path/to/certs/server-cert.pem
+PTS_SSL_KEYFILE=/absolute/path/to/certs/server-key.pem
 ```
 
-## 5. Server Deployment
-
-### 5.0 Docker Compose Quick Path
-
-The repository includes `Dockerfile`, `docker-compose.yml`, `.dockerignore`, and `scripts/docker-entrypoint.sh` for Linux server deployment.
+Set mTLS only when required:
 
 ```bash
-scripts/deploy-linux-server.sh \
-  --data-dir /var/lib/pts \
-  --api-key "change-this-to-a-long-random-string" \
-  --port 8000
-curl -H "X-API-Key: change-this-to-a-long-random-string" http://127.0.0.1:8000/health
+PTS_SSL_CAFILE=/absolute/path/to/certs/ca-cert.pem
 ```
 
-For HTTPS in the container, mount certificates through `PTS_CERT_DIR` and set `PTS_SSL_CERTFILE`, `PTS_SSL_KEYFILE`, and optional `PTS_SSL_CAFILE` in `.env`, for example `/certs/server-cert.pem` and `/certs/server-key.pem`.
-
-### 5.1 Environment Variables
-
-Create `/etc/pts/server.env`:
-
-```bash
-# Required
-export PTS_API_KEY="change-this-to-a-long-random-string-min-32-chars"
-export PTS_DATABASE_URL="sqlite:///var/lib/pts/personal_task_station.sqlite3"
-export PTS_HOST="0.0.0.0"
-export PTS_PORT="8443"
-
-# HTTPS (required for production)
-export PTS_SSL_CERTFILE="/etc/pts/certs/server-cert.pem"
-export PTS_SSL_KEYFILE="/etc/pts/certs/server-key.pem"
-
-# Optional: mTLS — when set, only clients with valid client certs can connect
-export PTS_SSL_CAFILE="/etc/pts/certs/ca-cert.pem"
-
-# Optional: LiteLLM integration
-# export PTS_LITELLM_BASE_URL="https://your-litellm-endpoint"
-# export PTS_LITELLM_MODEL="gpt-5.4"
-# export PTS_LITELLM_API_KEY="..."
-```
-
-### 5.2 Create Directories and Database
-
-```bash
-sudo mkdir -p /var/lib/pts
-sudo chown pts:pts /var/lib/pts
-```
-
-### 5.3 Systemd Service (Recommended)
-
-Create `/etc/systemd/system/pts-server.service`:
-
-```ini
-[Unit]
-Description=Personal Task Station Server
-After=network.target
-
-[Service]
-Type=simple
-User=pts
-Group=pts
-WorkingDirectory=/opt/personal-task-station
-EnvironmentFile=/etc/pts/server.env
-ExecStart=/opt/personal-task-station/.venv/bin/pts-server
-Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable pts-server
-sudo systemctl start pts-server
-sudo systemctl status pts-server
-```
-
-View logs:
-
-```bash
-sudo journalctl -u pts-server -f
-```
-
-### 5.4 Verify Server is Running
-
-```bash
-# Without CA cert (should fail)
-curl -v https://127.0.0.1:8443/health 2>&1 | grep -E "SSL|certificate"
-
-# With CA cert (should succeed for /health)
-curl --cacert /etc/pts/certs/ca-cert.pem https://127.0.0.1:8443/health
-
-# With CA cert + API key (should succeed for protected endpoints)
-curl --cacert /etc/pts/certs/ca-cert.pem \
-  -H "X-API-Key: your-api-key" \
-  https://127.0.0.1:8443/tasks
-
-# mTLS: with client cert (if PTS_SSL_CAFILE is set)
-curl --cacert /etc/pts/certs/ca-cert.pem \
-  --cert /etc/pts/certs/client-cert.pem \
-  --key /etc/pts/certs/client-key.pem \
-  https://127.0.0.1:8443/health
-```
-
-## 6. Firewall Configuration
-
-### 6.1 UFW (Ubuntu/Debian)
-
-```bash
-# Deny HTTP port (if previously open)
-sudo ufw deny 8000/tcp
-
-# Allow HTTPS port only
-sudo ufw allow 8443/tcp
-
-# Restrict to specific IP range (recommended)
-sudo ufw allow from 192.168.1.0/24 to any port 8443 proto tcp
-```
-
-### 6.2 iptables
-
-```bash
-sudo iptables -A INPUT -p tcp --dport 8443 -s 192.168.1.0/24 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 8443 -j DROP
-sudo iptables -A INPUT -p tcp --dport 8000 -j DROP
-```
-
-### 6.3 Cloud Provider Security Groups
-
-- Open inbound TCP on port 8443
-- Restrict source to your office/VPN IP range
-- Do **not** open port 8000 (HTTP)
-
-## 7. Client Deployment
-
-### 7.0 Package Scripts
-
-Linux client package:
-
-```bash
-scripts/package-linux-client.sh --output-dir dist/linux-client
-```
-
-The Linux script builds a PyInstaller executable when possible and otherwise writes a source tarball with installation instructions.
-
-Windows client package, run on a Windows host or Windows CI runner:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\package-windows-client.ps1 -OutputDir dist\windows-client
-```
-
-The Windows script creates `dist\windows-client\bin\pts-client.exe` with PyInstaller so target users do not need to install Python.
-
-### 7.1 Desktop Client Setup
-
-Install the application on the client machine:
-
-```bash
-cd ~/personal-task-station
-python -m venv .venv
-. .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-### 7.2 Deploy CA Certificate
-
-Copy the CA certificate to the client:
-
-```bash
-scp server:/etc/pts/certs/ca-cert.pem ~/.pts/certs/
-chmod 644 ~/.pts/certs/ca-cert.pem
-```
-
-### 7.3 Client Configuration
-
-Launch the client:
-
-```bash
-PTS_SERVER_CERT_PATH="$HOME/.pts/certs/ca-cert.pem" \
-PTS_SKILL_BASE_URL="https://your-server:8443" \
-PTS_SKILL_API_KEY="your-api-key" \
-.venv/bin/pts-client
-```
-
-In the connection settings UI:
-
-| Field | Value |
-|-------|-------|
-| Server URL | `https://your-server:8443` |
-| API Key | your-api-key |
-| Server cert path | `~/.pts/certs/ca-cert.pem` |
-
-### 7.4 mTLS Client Setup (Optional)
-
-If the server has `PTS_SSL_CAFILE` configured:
-
-```bash
-# Copy client certificate to client machine
-scp server:/etc/pts/certs/client-cert.pem ~/.pts/certs/
-scp server:/etc/pts/certs/client-key.pem ~/.pts/certs/
-chmod 600 ~/.pts/certs/client-key.pem
-```
-
-Set environment variables:
-
-```bash
-export PTS_CLIENT_CERT_PATH="$HOME/.pts/certs/client-cert.pem"
-export PTS_CLIENT_KEY_PATH="$HOME/.pts/certs/client-key.pem"
-export PTS_SERVER_CERT_PATH="$HOME/.pts/certs/ca-cert.pem"
-```
-
-## 8. Skill Wrapper Deployment
-
-### 8.1 Environment Configuration
-
-Create `~/.pts/skill.env`:
-
-```bash
-export PTS_SKILL_BASE_URL="https://your-server:8443"
-export PTS_SKILL_API_KEY="your-api-key"
-export PTS_SKILL_SERVER_CERT_PATH="$HOME/.pts/certs/ca-cert.pem"
-
-# For mTLS only:
-# export PTS_SKILL_CLIENT_CERT_PATH="$HOME/.pts/certs/client-cert.pem"
-# export PTS_SKILL_CLIENT_KEY_PATH="$HOME/.pts/certs/client-key.pem"
-```
-
-Source before running skills:
-
-```bash
-source ~/.pts/skill.env
-.venv/bin/pts-task-skill list --date 2026-04-23
-```
-
-## 9. Security Checklist
-
-Before going live, verify every item:
-
-- [ ] API key is at least 32 random characters
-- [ ] HTTPS is enabled (`PTS_SSL_CERTFILE` and `PTS_SSL_KEYFILE` are set)
-- [ ] HTTP port is blocked by firewall
-- [ ] CA certificate is distributed to all authorized clients
-- [ ] Private keys (`*-key.pem`) have `600` permissions
-- [ ] Database file is outside the web root
-- [ ] Server runs as a non-root user (`pts`)
-- [ ] Systemd service has `Restart=on-failure`
-- [ ] Firewall allows only authorized IP ranges
-- [ ] mTLS is enabled for high-security environments (`PTS_SSL_CAFILE`)
-- [ ] Client certificates are distributed securely (not via the same channel as the application)
-- [ ] Logs are monitored for failed authentication attempts
-
-## 10. Certificate Rotation
-
-Certificates expire. Plan rotation before expiry:
-
-### 10.1 Check Expiry Dates
-
-```bash
-openssl x509 -in /etc/pts/certs/server-cert.pem -noout -dates
-openssl x509 -in /etc/pts/certs/client-cert.pem -noout -dates
-```
-
-### 10.2 Rotate Server Certificate
-
-1. Generate new server certificate (reuse existing CA):
-
-```bash
-.venv/bin/python -c "
-from scripts.generate_certs import generate_server_cert
-from pathlib import Path
-ca_key = Path('/etc/pts/certs/ca-key.pem')
-ca_cert = Path('/etc/pts/certs/ca-cert.pem')
-generate_server_cert(Path('/etc/pts/certs'), ca_key, ca_cert, hostname='your-server', validity_days=365)
-"
-```
-
-2. Restart the server (zero-downtime not supported in MVP):
-
-```bash
-sudo systemctl restart pts-server
-```
-
-3. Verify:
-
-```bash
-curl --cacert /etc/pts/certs/ca-cert.pem https://your-server:8443/health
-```
-
-### 10.3 Rotate CA (Breaking Change)
-
-Rotating the CA requires redistributing the new CA cert to **all** clients:
-
-1. Generate new CA + server + client certs
-2. Update server configuration
-3. Restart server
-4. Distribute new `ca-cert.pem` to every client
-5. If using mTLS, distribute new `client-cert.pem` + `client-key.pem`
-
-## 11. Troubleshooting
-
-### 11.1 "SSL certificate verify failed"
-
-**Cause**: Client doesn't have the CA certificate.
-
-**Fix**:
-```bash
-export PTS_SERVER_CERT_PATH="/path/to/ca-cert.pem"
-# or for skills:
-export PTS_SKILL_SERVER_CERT_PATH="/path/to/ca-cert.pem"
-```
-
-### 11.2 "HTTP is not allowed"
-
-**Cause**: Client is using `http://` instead of `https://`.
-
-**Fix**: Update base URL to `https://your-server:8443`.
-
-### 11.3 "Missing or invalid API key" (401)
-
-**Cause**: `X-API-Key` header is missing or incorrect.
-
-**Fix**: Verify `PTS_API_KEY` matches on both server and client.
-
-### 11.4 mTLS Connection Refused
-
-**Cause**: Server has `PTS_SSL_CAFILE` set but client doesn't present a certificate.
-
-**Fix**: Set `PTS_CLIENT_CERT_PATH` and `PTS_CLIENT_KEY_PATH` on the client.
-
-### 11.5 Port Already in Use
-
-```bash
-sudo lsof -i :8443
-sudo systemctl stop pts-server
-sudo systemctl start pts-server
-```
-
-### 11.6 Debug Certificate Issues
-
-```bash
-# Inspect server certificate
-openssl s_client -connect your-server:8443 -servername your-server </dev/null | openssl x509 -noout -text
-
-# Test with verbose output
-curl -v --cacert ca-cert.pem https://your-server:8443/health
-
-# Test mTLS with verbose output
-curl -v --cacert ca-cert.pem --cert client-cert.pem --key client-key.pem https://your-server:8443/health
-```
-
-## 12. Run Security Validation
-
-After every deployment or configuration change, run the validation script:
-
-```bash
-.venv/bin/python scripts/validate_security.py
-```
-
-Expected output: `Total: 12/12 passed`
-
-If any check fails, do not expose the server to the network until resolved.
+For most LAN/public usage, a reverse proxy or private tunnel is simpler and safer than exposing Uvicorn directly.
+
+## 6. Operator Checklist
+
+- Use a unique random API key, preferably `openssl rand -hex 32`.
+- Keep SQLite data in `PTS_DATA_DIR` and back it up regularly.
+- Keep `.env.host`, `.env`, private keys, and database files out of Git.
+- Bind to `127.0.0.1` unless LAN/VPN access is explicitly needed.
+- Restrict LAN ports with host firewall rules.
+- Use a reverse proxy/tunnel with HTTPS for access outside the local machine.
+- Run `scripts/smoke-test.sh` after deploys and restarts.

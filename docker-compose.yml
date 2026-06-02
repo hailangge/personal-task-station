@@ -25,7 +25,7 @@ services:
       PTS_LITELLM_API_KEY: "${PTS_LITELLM_API_KEY:-}"
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+             "import os, ssl, urllib.request; scheme='https' if os.environ.get('PTS_SSL_CERTFILE') else 'http'; ctx=ssl._create_unverified_context() if scheme == 'https' else None; urllib.request.urlopen(f'{scheme}://localhost:8000/health', context=ctx)"]
       interval: 30s
       timeout: 5s
       retries: 3

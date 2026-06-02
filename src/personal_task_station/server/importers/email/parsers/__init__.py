@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-from .cmb import CmbEmailParser
 from .alipay import AlipayEmailParser
+from .bankcomm import BankcommEmailParser
+from .cmb import CmbEmailParser
+from .generic import GenericNotificationParser
 from .jd import JdEmailParser
+from .pdd import PddEmailParser
 from .taobao import TaobaoEmailParser
 from .wechat import WechatEmailParser
-from .pdd import PddEmailParser
-from .generic import GenericNotificationParser
 
 __all__ = [
-    "CmbEmailParser",
     "AlipayEmailParser",
+    "BankcommEmailParser",
+    "CmbEmailParser",
+    "GenericNotificationParser",
     "JdEmailParser",
+    "PddEmailParser",
     "TaobaoEmailParser",
     "WechatEmailParser",
-    "PddEmailParser",
-    "GenericNotificationParser",
 ]

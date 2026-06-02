@@ -75,6 +75,73 @@ def test_task_api_accepts_spec_field_names(client, auth_headers):
     assert payload["notes"] == "Uses public field names"
     assert payload["status"] == "blocked"
 
+    response = client.patch(
+        f"/tasks/{payload['id']}",
+        headers=auth_headers,
+        json={
+            "scheduled_date": "2026-05-15",
+            "start_time": "2026-05-15T11:00:00",
+            "due_time": "2026-05-15T12:00:00",
+            "notes": "Updated public aliases",
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["task_date"] == "2026-05-15"
+    assert payload["scheduled_date"] == "2026-05-15"
+    assert payload["start_at"] == "2026-05-15T11:00:00"
+    assert payload["start_time"] == "2026-05-15T11:00:00"
+    assert payload["due_at"] == "2026-05-15T12:00:00"
+    assert payload["due_time"] == "2026-05-15T12:00:00"
+    assert payload["note"] == "Updated public aliases"
+    assert payload["notes"] == "Updated public aliases"
+
+
+def test_task_api_accepts_priority_labels_and_numeric_strings(client, auth_headers):
+    response = client.post(
+        "/tasks",
+        headers=auth_headers,
+        json={"title": "Priority label", "priority": "high"},
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["priority"] == 2
+
+    response = client.patch(
+        f"/tasks/{payload['id']}",
+        headers=auth_headers,
+        json={"priority": "5"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["priority"] == 5
+
+
+def test_task_api_rejects_unknown_priority_label(client, auth_headers):
+    response = client.post(
+        "/tasks",
+        headers=auth_headers,
+        json={"title": "Bad priority", "priority": "urgent"},
+    )
+    assert response.status_code == 422
+
+
+def test_create_task_with_completed_subitem_syncs_status(client, auth_headers):
+    response = client.post(
+        "/tasks",
+        headers=auth_headers,
+        json={
+            "title": "Auto sync on create",
+            "subitems": [{"title": "Done", "status": "completed"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    task = response.json()
+    assert task["status"] == "completed"
+    history = task["history"]
+    assert len(history) == 2
+    assert all(isinstance(entry["id"], int) for entry in history)
+    assert history[1]["new_status"] == "completed"
+
 
 def test_reorder_subitems_response_and_get_use_requested_order(client, auth_headers):
     response = client.post(

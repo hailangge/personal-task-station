@@ -45,6 +45,29 @@ def test_skill_wrappers_call_server(client, auth_headers, monkeypatch):
     assert len(tasks) == 1
     assert tasks[0]["title"] == "Via skill"
 
+    created = task_skill.create_task(
+        title="Skill aliases",
+        scheduled_date="2026-05-14",
+        start_time="2026-05-14T09:00:00",
+        due_time="2026-05-14T10:00:00",
+        notes="Skill note",
+        priority="critical",
+    )
+    assert created["task_date"] == "2026-05-14"
+    assert created["scheduled_date"] == "2026-05-14"
+    assert created["start_at"] == "2026-05-14T09:00:00"
+    assert created["start_time"] == "2026-05-14T09:00:00"
+    assert created["due_at"] == "2026-05-14T10:00:00"
+    assert created["due_time"] == "2026-05-14T10:00:00"
+    assert created["note"] == "Skill note"
+    assert created["notes"] == "Skill note"
+    assert created["priority"] == 1
+
+    updated = task_skill.update_task(created["id"], notes="Updated skill note", priority="5")
+    assert updated["note"] == "Updated skill note"
+    assert updated["notes"] == "Updated skill note"
+    assert updated["priority"] == 5
+
     finance_skill = FinanceSkill()
     summary = finance_skill.monthly_summary(2026, 3)
     assert summary["month"] == "2026-03"
