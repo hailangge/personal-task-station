@@ -1,5 +1,22 @@
 # Tasks
 
+## In progress (2026-08 iteration: automated bill ingestion)
+
+- [x] Research automated information-acquisition channels (`research/information-acquisition-2026-08.md`): official bill-mail zip channel, invoice PDF email path, SMS webhook, screenshot VLM, e-commerce coverage matrix.
+- [x] Add ingestion settings to `AppSettings` (`PTS_IMAP_*`, `PTS_EMAIL_POLL_SECONDS`, `PTS_EMAIL_BILL_ONLY`, bill zip passwords) and document them in `.env.example`.
+- [x] Implement encrypted-zip extraction helper with stdlib ZipCrypto + pyzipper AES fallback and multi-encoding CSV decoding.
+- [x] Add official-bill attachment parsers: `WechatBillZipParser`, `AlipayBillZipParser` (GBK CSV, neutral rows skipped), `InvoicePdfEmailParser` (pdfplumber; invoice number as dedupe id).
+- [x] Enforce bill-only mailbox gate in `EmailImportService` (subject keywords or finance sender + structured attachments); non-bill mail never touches the ledger.
+- [x] Extract account seeding + sync orchestration into `services/email_sync.py`; routes delegate; env-configured mailbox is seeded at startup; background poller thread enabled by `PTS_EMAIL_POLL_SECONDS > 0`.
+- [x] Rework `/email-import/accounts/{id}/import` and `/email-import/sync` (new optional `force` flag) on top of the shared sync service.
+- [x] Implement bank dynamic-account SMS parser and `POST /ingest/webhook` delivery endpoint (JSON/form/plain text, X-API-Key auth).
+- [x] Implement `IngestService.deliver_transactions` as the single idempotent ledger entry point (external-id dedupe across email/SMS/screenshot sources; fixes missing flush before normalize counts).
+- [x] Implement screenshot confirm-first flow: `POST /ingest/screenshots`, list/confirm/discard endpoints, `ScreenshotIngestDraft` model, LiteLLM vision extractor with graceful degradation.
+- [x] Register `email` extra (`pyzipper`) and add pdfplumber/pyzipper to dev extras; commit sample invoice PDF fixture and its generator script.
+- [x] Validation: `QT_QPA_PLATFORM=offscreen pytest -q` -> **162 passed** (24 new: attachment parsers incl. AES zip, bill-only gate, SMS parser, ingest idempotency, webhook API, screenshot confirm flow, fake-IMAP end-to-end sync); lifespan seed smoke confirmed `2924799749@qq.com` account auto-creation and poller stop-event wiring.
+- [x] Create one clear git commit after validation passes; do not push — hand off to github-assistant.
+- [ ] Inject real test emails into the monitored mailbox (operator step) and run a live sync verification.
+
 ## In progress
 - [x] Review current repo state for this iteration: README/specification files/tests/source plus `git status --short` and `git diff --stat`; existing uncommitted calendar/deploy/finance/email work preserved rather than clobbered.
 - [x] Re-scope specs to target usable personal small desktop: stable calendar/task desktop plus CSV-first finance/transaction processing MVP.

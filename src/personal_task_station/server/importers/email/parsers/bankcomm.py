@@ -25,7 +25,8 @@ class BankcommEmailParser(EmailParserBase):
     sender_patterns = ["bankcomm.com", "95559@", "bocom.com.cn"]
     subject_patterns = ["交通银行", "信用卡", "交易提醒", "账单", "交行"]
 
-    def parse(self, email: FetchedEmail, since_date: date | None = None) -> ImportResult:
+    def parse(self, email: FetchedEmail, since_date: date | None = None,
+              passwords: tuple[str, ...] = ()) -> ImportResult:
         result = ImportResult(source_name=self.source_name)
 
         # 1. Excel attachments (App manual export)

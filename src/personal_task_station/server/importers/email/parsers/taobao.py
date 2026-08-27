@@ -20,7 +20,8 @@ class TaobaoEmailParser(EmailParserBase):
     sender_patterns = ["taobao.com", "tmall.com", "no-reply@taobao"]
     subject_patterns = ["订单确认", "已付款", "发货通知", "淘宝", "天猫"]
 
-    def parse(self, email: FetchedEmail, since_date: date | None = None) -> ImportResult:
+    def parse(self, email: FetchedEmail, since_date: date | None = None,
+              passwords: tuple[str, ...] = ()) -> ImportResult:
         result = ImportResult(source_name=self.source_name)
         text = self._extract_text(email)
         if not text:

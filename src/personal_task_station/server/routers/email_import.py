@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from personal_task_station.server.dependencies import get_db
 from personal_task_station.server.importers.email.client import ImapConfig
 from personal_task_station.server.importers.email.service import EmailImportService
-from personal_task_station.server.services.billing import BillingService
+from personal_task_station.server.services.email_sync import run_account_import, sync_accounts
 from personal_task_station.shared.models import EmailAccount, EmailImportLog
 from personal_task_station.shared.schemas import (
     EmailAccountCreate,
@@ -20,10 +20,6 @@ from personal_task_station.shared.schemas import (
 )
 
 router = APIRouter(prefix="/email-import", tags=["email-import"])
-
-
-def _billing_service(session: Session) -> BillingService:
-    return BillingService(session)
 
 
 @router.get("/accounts", response_model=list[EmailAccountRead])
@@ -105,56 +101,18 @@ def import_from_email(
     if not account.is_active:
         raise HTTPException(status_code=400, detail="Account is inactive")
 
-    config = ImapConfig(
-        host=account.imap_host,
-        port=account.imap_port,
-        username=account.username,
-        password=account.password,
-        folder=account.folder,
-        use_ssl=account.use_ssl,
-    )
-
     try:
-        service = EmailImportService(config)
-        results = service.import_from_email(
-            since_date=since_date, mark_seen=True, ignore_seen=ignore_seen
-        )
-    except Exception as exc:
+        import_job = run_account_import(session, account, since_date=since_date, ignore_seen=ignore_seen)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - IMAP/network errors surface as 400
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Create import job and feed transactions into billing pipeline
-    import_job = _billing_service(session).create_import_job(
-        source_name=f"email:{account.name}",
-        filename="email_import",
-    )
-
-    total_tx = 0
-    for result in results:
-        for tx in result.raw_transactions:
-            _billing_service(session).add_raw_transaction_from_email(import_job.id, tx)
-            total_tx += 1
-
-    # Normalize and merge
-    _billing_service(session).normalize_transactions(import_job.id)
-    _billing_service(session).merge_and_classify(import_job.id)
-
-    # Update account last_import
-    from personal_task_station.shared.models import utcnow
-
-    account.last_import_at = utcnow()
-    session.commit()
-
-    # Log import results
-    for result in results:
-        log = EmailImportLog(
-            email_account_id=account.id,
-            email_uid="batch",
-            parser_used=result.source_name,
-            transaction_count=len(result.raw_transactions),
-            error_message="; ".join(result.errors) if result.errors else "",
+    if import_job is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No new transactions ingested (all duplicates or nothing parsed)",
         )
-        session.add(log)
-    session.commit()
 
     session.refresh(import_job)
     return ImportJobRead.model_validate(import_job)
@@ -163,75 +121,16 @@ def import_from_email(
 @router.post("/sync", response_model=list[ImportJobRead])
 def sync_all_accounts(
     since_date: date | None = None,
+    force: bool = False,
     session: Session = Depends(get_db),
 ) -> list[ImportJobRead]:
     """Sync all active email accounts for new transactions.
 
-    Skips accounts whose last import was within the past hour to avoid hammering IMAP.
+    Skips accounts whose last import was within the past hour unless
+    ``force=true`` is passed; the background poller passes ``force`` every run.
     """
-    from datetime import datetime, timezone
-
-    accounts = (
-        session.query(EmailAccount)
-        .filter(EmailAccount.is_active == True)  # noqa: E712
-        .all()
-    )
-
-    jobs: list[ImportJobRead] = []
-    for account in accounts:
-        # Throttle: skip if imported less than 60 minutes ago
-        if account.last_import_at:
-            age_minutes = (datetime.now(timezone.utc) - account.last_import_at.replace(tzinfo=timezone.utc)).total_seconds() / 60
-            if age_minutes < 60:
-                continue
-
-        config = ImapConfig(
-            host=account.imap_host,
-            port=account.imap_port,
-            username=account.username,
-            password=account.password,
-            folder=account.folder,
-            use_ssl=account.use_ssl,
-        )
-        try:
-            service = EmailImportService(config)
-            results = service.import_from_email(since_date=since_date, mark_seen=True)
-        except Exception as exc:
-            # Log failure but continue with other accounts
-            import logging
-            logging.getLogger(__name__).warning("Email sync failed for account %d: %s", account.id, exc)
-            continue
-
-        import_job = _billing_service(session).create_import_job(
-            source_name=f"email:{account.name}",
-            filename="email_import",
-        )
-        for result in results:
-            for tx in result.raw_transactions:
-                _billing_service(session).add_raw_transaction_from_email(import_job.id, tx)
-
-        _billing_service(session).normalize_transactions(import_job.id)
-        _billing_service(session).merge_and_classify(import_job.id)
-
-        from personal_task_station.shared.models import utcnow
-        account.last_import_at = utcnow()
-        session.commit()
-
-        for result in results:
-            log = EmailImportLog(
-                email_account_id=account.id,
-                email_uid="batch",
-                parser_used=result.source_name,
-                transaction_count=len(result.raw_transactions),
-                error_message="; ".join(result.errors) if result.errors else "",
-            )
-            session.add(log)
-        session.commit()
-
-        session.refresh(import_job)
-        jobs.append(ImportJobRead.model_validate(import_job))
-
-    return jobs
+    jobs = sync_accounts(session, since_date=since_date, force=force)
+    return [ImportJobRead.model_validate(job) for job in jobs]
 
 
 @router.get("/accounts/{account_id}/logs", response_model=list[dict])

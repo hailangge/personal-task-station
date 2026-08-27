@@ -24,7 +24,8 @@ class CmbEmailParser(EmailParserBase):
     sender_patterns = ["cmbchina.com", "creditcard@", "cmb@"]
     subject_patterns = ["信用卡对账单", "账务明细", "交易提醒", "招商银行"]
 
-    def parse(self, email: FetchedEmail, since_date: date | None = None) -> ImportResult:
+    def parse(self, email: FetchedEmail, since_date: date | None = None,
+              passwords: tuple[str, ...] = ()) -> ImportResult:
         result = ImportResult(source_name=self.source_name)
 
         # 1. PDF attachment (monthly statement from CMB email)

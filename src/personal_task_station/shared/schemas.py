@@ -353,6 +353,42 @@ class EmailImportResult(BaseModel):
     errors: list[str]
 
 
+class IngestDeliveryRead(BaseModel):
+    """Result of one webhook delivery (SMS / notification ingestion)."""
+
+    status: str  # created | skipped_duplicate | ignored
+    transaction_count: int = 0
+    duplicate_count: int = 0
+    import_job_id: int | None = None
+    message: str = ""
+
+
+class ScreenshotDraftRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    filename: str
+    stored_path: str
+    sha256: str
+    status: str
+    proposed_payload: dict
+    extraction_errors: list
+    confirmed_transaction_id: int | None
+
+
+class ScreenshotConfirmRequest(BaseModel):
+    occurred_on: date | None = None
+    amount: Decimal | None = None
+    direction: BillDirection | None = None
+    merchant_name: str | None = None
+    note: str = ""
+    channel: str = ""
+
+
+class ScreenshotDiscardRequest(BaseModel):
+    reason: str = ""
+
+
 class ClientSettings(BaseModel):
     connection: ConnectionConfig = Field(default_factory=ConnectionConfig)
     desktop: DesktopPreferences = Field(default_factory=DesktopPreferences)

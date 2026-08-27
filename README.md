@@ -202,6 +202,37 @@ Client capabilities in this MVP:
 - Finance CSV import, month summary, transaction list, duplicate review/undo, and reanalyze controls
 - Connection configuration with API key and certificate path fields
 
+## Automated bill ingestion
+
+Beyond manual CSV import, the server can ingest transactions automatically:
+
+1. **Bill mailbox monitoring (P0).** Point `PTS_IMAP_*` variables at a mailbox (e.g. `2924799749@qq.com` via `imap.qq.com:993` with an IMAP auth code) and set `PTS_EMAIL_POLL_SECONDS` to enable a background poller. The account is seeded automatically at startup. Only **bill-related** emails are processed (`PTS_EMAIL_BILL_ONLY=1`, default): subject keywords such as 账单 / 流水证明 / 发票, or finance senders carrying zip/pdf attachments.
+   - Encrypted WeChat Pay / Alipay monthly bill zips are opened with `PTS_WECHAT_BILL_ZIP_PASSWORD` / `PTS_ALIPAY_BILL_ZIP_PASSWORD` (or comma-separated `PTS_BILL_ZIP_PASSWORDS`) and their official CSVs parsed into transactions (idempotent via transaction ids).
+   - Electronic invoice PDF attachments (京东/天猫 deliver these by email) are parsed with pdfplumber; the invoice number becomes the dedupe id.
+2. **Webhook for bank SMS forwarding (P1).** Configure [SmsForwarder](https://github.com/pppscn/SmsForwarder) on an Android phone to POST dynamic-account SMS texts:
+
+   ```bash
+   curl -sk -X POST "http://127.0.0.1:8000/ingest/webhook" \
+     -H "X-API-Key: $PTS_API_KEY" -H "Content-Type: application/json" \
+     -d '{"text":"【招商银行】您尾号1234的账户7月1日12:00完成快捷支付交易人民币100.00元","source_name":"cmb_sms"}'
+   ```
+
+   Plain-text bodies work too. Re-delivering the same message reports `skipped_duplicate`.
+3. **Screenshot ingestion (P2, confirm-first).** Upload payment screenshots; when LiteLLM vision is configured they are pre-filled automatically, otherwise you supply fields manually and confirm:
+
+   ```bash
+   curl -sk -X POST "http://127.0.0.1:8000/ingest/screenshots" \
+     -H "X-API-Key: $PTS_API_KEY" -F file=@shot.png
+   # -> {"id": 7, "status": "proposed", ...}
+   curl -sk -X POST "http://127.0.0.1:8000/ingest/screenshots/7/confirm" \
+     -H "X-API-Key: $PTS_API_KEY" -H "Content-Type: application/json" \
+     -d '{"occurred_on":"2026-08-01","amount":"66.50","merchant_name":"全家便利店"}'
+   ```
+
+Manual sync without the background poller: `POST /email-import/sync?force=true` (per-account import keeps its own endpoint under `/email-import/accounts/{id}/import`, returning `409` when nothing new was ingested).
+
+See `.env.example` for every variable involved. See `research/information-acquisition-2026-08.md` for the full channel analysis.
+
 ## Package desktop clients
 
 ```bash

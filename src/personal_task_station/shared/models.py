@@ -254,3 +254,22 @@ class EmailImportLog(Base):
     transaction_count: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str] = mapped_column(Text, default="")
     imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ScreenshotIngestDraft(TimestampMixin, Base):
+    """Confirm-first draft created from a payment/bill screenshot upload.
+
+    Statuses: ``proposed`` (VLM extraction pending manual review), ``confirmed``
+    (pushed into the billing pipeline), ``discarded`` (rejected by the user).
+    """
+
+    __tablename__ = "screenshot_ingest_drafts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    stored_path: Mapped[str] = mapped_column(String(500), default="")
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="proposed")
+    proposed_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    extraction_errors: Mapped[list] = mapped_column(JSON, default=list)
+    confirmed_transaction_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

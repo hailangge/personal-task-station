@@ -20,7 +20,8 @@ class JdEmailParser(EmailParserBase):
     sender_patterns = ["jd.com", "service@jd"]
     subject_patterns = ["订单确认", "支付成功", "京东", "jd.com"]
 
-    def parse(self, email: FetchedEmail, since_date: date | None = None) -> ImportResult:
+    def parse(self, email: FetchedEmail, since_date: date | None = None,
+              passwords: tuple[str, ...] = ()) -> ImportResult:
         result = ImportResult(source_name=self.source_name)
         text = self._extract_text(email)
         if not text:

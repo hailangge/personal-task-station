@@ -5,6 +5,25 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _bill_zip_passwords() -> tuple[str, ...]:
+    """Collect candidate passwords for encrypted bill zip attachments.
+
+    Named variables come first so operators can pin provider-specific secrets;
+    ``PTS_BILL_ZIP_PASSWORDS`` accepts a comma-separated list for extra keys.
+    """
+    passwords: list[str] = []
+    for env_name in ("PTS_WECHAT_BILL_ZIP_PASSWORD", "PTS_ALIPAY_BILL_ZIP_PASSWORD"):
+        value = os.environ.get(env_name, "").strip()
+        if value and value not in passwords:
+            passwords.append(value)
+    raw = os.environ.get("PTS_BILL_ZIP_PASSWORDS", "")
+    for part in raw.split(","):
+        value = part.strip()
+        if value and value not in passwords:
+            passwords.append(value)
+    return tuple(passwords)
+
+
 @dataclass(slots=True)
 class AppSettings:
     database_url: str
@@ -21,6 +40,16 @@ class AppSettings:
     litellm_model: str | None
     litellm_api_key: str | None
     request_timeout_seconds: float
+    # Automated ingestion settings (email monitoring / poller / webhook).
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: str = ""
+    imap_folder: str = "INBOX"
+    imap_use_ssl: bool = True
+    email_poll_seconds: int = 0
+    email_bill_only: bool = True
+    bill_zip_passwords: tuple[str, ...] = ()
 
     @classmethod
     def load(cls) -> "AppSettings":
@@ -41,4 +70,13 @@ class AppSettings:
             litellm_model=os.environ.get("PTS_LITELLM_MODEL"),
             litellm_api_key=os.environ.get("PTS_LITELLM_API_KEY"),
             request_timeout_seconds=float(os.environ.get("PTS_REQUEST_TIMEOUT_SECONDS", "15")),
+            imap_host=os.environ.get("PTS_IMAP_HOST", ""),
+            imap_port=int(os.environ.get("PTS_IMAP_PORT", "993")),
+            imap_username=os.environ.get("PTS_IMAP_USERNAME", ""),
+            imap_password=os.environ.get("PTS_IMAP_PASSWORD", ""),
+            imap_folder=os.environ.get("PTS_IMAP_FOLDER", "INBOX"),
+            imap_use_ssl=os.environ.get("PTS_IMAP_USE_SSL", "1") == "1",
+            email_poll_seconds=int(os.environ.get("PTS_EMAIL_POLL_SECONDS", "0")),
+            email_bill_only=os.environ.get("PTS_EMAIL_BILL_ONLY", "1") == "1",
+            bill_zip_passwords=_bill_zip_passwords(),
         )

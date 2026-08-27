@@ -24,7 +24,8 @@ class EmailParserBase(ABC):
         return from_match or subj_match
 
     @abstractmethod
-    def parse(self, email: FetchedEmail, since_date: date | None = None) -> ImportResult:
+    def parse(self, email: FetchedEmail, since_date: date | None = None,
+              passwords: tuple[str, ...] = ()) -> ImportResult:
         ...
 
     def _extract_text(self, email: FetchedEmail) -> str:

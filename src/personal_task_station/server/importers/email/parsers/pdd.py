@@ -20,7 +20,8 @@ class PddEmailParser(EmailParserBase):
     sender_patterns = ["pinduoduo.com", "service@pinduoduo"]
     subject_patterns = ["订单", "支付成功", "拼多多", "pinduoduo"]
 
-    def parse(self, email: FetchedEmail, since_date: date | None = None) -> ImportResult:
+    def parse(self, email: FetchedEmail, since_date: date | None = None,
+              passwords: tuple[str, ...] = ()) -> ImportResult:
         result = ImportResult(source_name=self.source_name)
         text = self._extract_text(email)
         if not text:

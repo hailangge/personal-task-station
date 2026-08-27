@@ -38,6 +38,22 @@ PTS_HOST=0.0.0.0
 PTS_HOST=192.168.1.20
 ```
 
+### 1.1b Optional: Automated Bill Ingestion
+
+Append to `.env.host` to monitor a bill mailbox (e.g. `2924799749@qq.com`):
+
+```bash
+PTS_IMAP_HOST=imap.qq.com
+PTS_IMAP_PORT=993
+PTS_IMAP_USERNAME=2924799749@qq.com
+PTS_IMAP_PASSWORD=the-imap-authorization-code-not-the-login-password
+PTS_EMAIL_POLL_SECONDS=300
+PTS_WECHAT_BILL_ZIP_PASSWORD=password-inside-each-bill-email-sms
+PTS_ALIPAY_BILL_ZIP_PASSWORD=your-alipay-zip-password
+```
+
+Startup seeds this mailbox as an account automatically, and the background poller ingests only bill-related emails (encrypted WeChat/Alipay bill zips, invoice PDFs) into the ledger with external-id idempotency. SMS webhook and screenshot endpoints are documented in the README ("Automated bill ingestion"). Install the parsing extras once: `.venv/bin/pip install 'personal-task-station[email]'`.
+
 ### 1.2 Dry Run
 
 ```bash

@@ -20,7 +20,8 @@ class WechatEmailParser(EmailParserBase):
     sender_patterns = ["wechat.com", "pay@wechat", "service@wechat"]
     subject_patterns = ["微信支付", "交易提醒", "支付凭证", "WeChat Pay"]
 
-    def parse(self, email: FetchedEmail, since_date: date | None = None) -> ImportResult:
+    def parse(self, email: FetchedEmail, since_date: date | None = None,
+              passwords: tuple[str, ...] = ()) -> ImportResult:
         result = ImportResult(source_name=self.source_name)
         text = self._extract_text(email)
         if not text:
