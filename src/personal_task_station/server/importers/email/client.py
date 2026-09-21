@@ -30,6 +30,9 @@ class FetchedEmail:
 
 
 class EmailClient:
+    # QQ/163 style servers refuse SELECT until an IMAP ID command is issued.
+    _ID_REQUIRED_SENDERS = ("qq.com", "163.com", "126.com")
+
     def __init__(self, config: ImapConfig):
         self.config = config
         self._conn: imaplib.IMAP4_SSL | imaplib.IMAP4 | None = None
@@ -41,6 +44,35 @@ class EmailClient:
         else:
             self._conn = imaplib.IMAP4(self.config.host, self.config.port)
         self._conn.login(self.config.username, self.config.password)
+        self._send_imap_id()
+
+    def _send_imap_id(self) -> None:
+        """Announce client identity for servers requiring RFC 2971 ID.
+
+        QQ Mail (and Netease mailboxes) return ``Unsafe Login`` errors on any
+        subsequent command unless an ID command is issued right after login;
+        harmless elsewhere because failures are swallowed.
+        """
+        conn = self._conn
+        if conn is None:
+            return
+        try:
+            required = any(
+                marker in str(self.config.host).lower()
+                or marker in self.config.username.lower()
+                for marker in self._ID_REQUIRED_SENDERS
+            )
+            if not required:
+                return
+            from imaplib import Commands
+
+            Commands.setdefault("ID", ("AUTH",))
+            conn._simple_command(  # noqa: SLF001 - imaplib exposes no public ID helper
+                "ID",
+                '("name" "personal-task-station" "version" "0.1.0")',
+            )
+        except Exception:  # noqa: BLE001 - identity hints are best-effort only
+            pass
 
     def disconnect(self) -> None:
         if self._conn:
@@ -115,14 +147,12 @@ class EmailClient:
                     payload = part.get_payload(decode=True) or b""
                     attachments.append((filename, payload))
                 elif ctype == "text/html":
-                    payload = part.get_payload(decode=True) or b""
-                    body_html = payload.decode("utf-8", errors="replace")
+                    body_html = self._decode_payload(part, part.get_payload(decode=True))
                 elif ctype == "text/plain":
-                    payload = part.get_payload(decode=True) or b""
-                    body_text = payload.decode("utf-8", errors="replace")
+                    body_text = self._decode_payload(part, part.get_payload(decode=True))
         else:
             payload = msg.get_payload(decode=True) or b""
-            text = payload.decode("utf-8", errors="replace")
+            text = self._decode_payload(msg, payload)
             if msg.get_content_type() == "text/html":
                 body_html = text
             else:
@@ -136,6 +166,19 @@ class EmailClient:
             body_text=body_text,
             attachments=attachments,
         )
+
+    @staticmethod
+    def _decode_payload(part: email.message.Message, payload: bytes | None) -> str:
+        """Decode a text part honoring its charset (Chinese banks love GBK)."""
+        if not payload:
+            return ""
+        charset = part.get_content_charset() or "utf-8"
+        for candidate in (charset, "utf-8", "gbk"):
+            try:
+                return payload.decode(candidate)
+            except (UnicodeDecodeError, LookupError):
+                continue
+        return payload.decode("utf-8", errors="replace")
 
     def _decode_header(self, value: str) -> str:
         from email.header import decode_header

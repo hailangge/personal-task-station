@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import io
 import zipfile
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -182,3 +184,99 @@ class TestBillRelatedGate:
 
         email = _email("您的账户资料", [("bill.zip", b"PK")], from_addr="service@mail.alipay.com")
         assert EmailImportService.is_bill_related(email) is True
+
+
+class TestRealWorldStatementStructures:
+    """Regression tests derived from live QQ-mail statement samples."""
+
+    CMB_HTML = "\n".join(
+        [
+            "<html><body>尊敬的客户，您的个人消费卡账单如下：",
+            "<table><tr><td>2026/07/16-2026/08/15</td></tr></table>",
+            "积分兑换率表 ¥ 41,000.00 其他内容",
+            "<table>",
+            "<tr><td>消费</td><td>0726</td><td>0727</td><td>财付通-历城区正鑫家电维修经营部</td><td>¥ 100.00</td><td>4957</td><td>CN</td><td>100.00</td></tr>",
+            "<tr><td>0726</td><td>0727</td><td>财付通-拼多多平台商户</td><td>¥ 57.76</td><td>4957</td><td>CN</td><td>57.76</td></tr>",
+            "<tr><td>还款</td><td>0805</td><td>0806</td><td>财付通-还款渠道</td><td>¥ -1.72</td><td>4957</td><td>CN</td><td>-1.72</td></tr>",
+            "<tr><td>0415</td><td>0416</td><td>财付通-分期扣款计划行</td><td>¥ 49.00</td><td>4957</td><td>CN</td><td>49.00</td></tr>",
+            "</table></body></html>",
+        ]
+    )
+
+    def test_cmb_line_scan_handles_rowspan_groups_and_period(self):
+        from personal_task_station.server.importers.email.parsers.cmb import CmbEmailParser
+
+        email = _email(
+            "招商银行信用卡电子账单", [], from_addr="ccsvc@message.cmbchina.com"
+        )
+        email.body_html = self.CMB_HTML
+        parser = CmbEmailParser()
+        assert parser.can_parse(email)
+        result = parser.parse(email)
+        assert result.errors == []
+        # Period 07/16-08/15 keeps 0726/0727/0805 transactions; the 0415
+        # installment-plan line and ¥0.00-style markers are excluded.
+        amounts = sorted((str(t.amount), t.direction.value) for t in result.raw_transactions)
+        assert amounts == [
+            ("1.72", "income"),
+            ("100.00", "expense"),
+            ("57.76", "expense"),
+        ]
+        assert all(t.card_last4 == "4957" for t in result.raw_transactions)
+        assert all(t.external_id.startswith("cmb:") for t in result.raw_transactions)
+
+    def test_bankcomm_cny_amount_cell_and_direction(self):
+        from personal_task_station.server.importers.email.parsers.bankcomm import (
+            BankcommEmailParser,
+        )
+
+        html = "\n".join(
+            [
+                "<html><body><table>",
+                "<tr><td>交易 日期 Transaction Date</td><td>记账 日期</td><td>卡末 四位</td><td>交易 说明 Description</td><td>交易 金额 Transaction Currency</td></tr>",
+                "<tr><td>07/29</td><td>07/29</td><td>7352</td><td>消费 （特约）美团</td><td>CNY 24.89</td></tr>",
+                "<tr><td>07/27</td><td>07/27</td><td>7352</td><td>信用卡还款 跨行自助转账还款</td><td>CNY 487.57</td></tr>",
+                "<tr><td>08/06</td><td>08/06</td><td>7352</td><td>退货 （特约）美团</td><td>CNY 1415.00</td></tr>",
+                "</table></body></html>",
+            ]
+        )
+        email = _email(
+            "交通银行个人信用卡2026年08月电子账单", [], from_addr="pccc@bocomcc.com"
+        )
+        email.body_html = html
+        parser = BankcommEmailParser()
+        assert parser.can_parse(email)
+        result = parser.parse(email)
+        assert result.errors == []
+        assert len(result.raw_transactions) == 3
+        by_dir: dict[str, list[str]] = {}
+        for tx in result.raw_transactions:
+            by_dir.setdefault(tx.direction.value, []).append(str(tx.amount))
+        assert by_dir["expense"] == ["24.89"]
+        assert sorted(by_dir["income"]) == ["1415.00", "487.57"]
+        # Description prefixes stripped, repayment keyword keeps income.
+        merchants = {t.merchant_name for t in result.raw_transactions}
+        assert "美团" in merchants
+
+    def test_gbk_single_part_html_is_decoded(self):
+        """BOComm sends single-part GBK HTML; the client must honor charset."""
+        from email import message_from_bytes
+
+        from personal_task_station.server.importers.email.client import (
+            EmailClient,
+            ImapConfig,
+        )
+
+        html = (
+            '<html><head><meta http-equiv="Content-Type" content="text/html; '
+            'charset=gbk"></head><body>交通银行电子账单 交易日期 金额</body></html>'
+        )
+        msg = message_from_bytes(
+            b"Content-Type: text/html; charset=gbk\r\n"
+            b"Content-Transfer-Encoding: base64\r\n\r\n"
+            + base64.b64encode(html.encode("gbk"))
+        )
+        client = EmailClient(ImapConfig(host="imap.qq.com"))
+        parsed = client._parse_message("1", msg)
+        assert "交通银行电子账单" in parsed.body_html
+        assert "交易日期" in parsed.body_html

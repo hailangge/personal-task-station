@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 from datetime import date, datetime
@@ -51,6 +52,12 @@ class CmbEmailParser(EmailParserBase):
         # 3. HTML table (inline notification email)
         if email.body_html:
             transactions = self._parse_html_table(email.body_html, since_date)
+            if len(transactions) < 3:
+                # Layout-heavy statements (nested/CSS-hacked tables) defeat
+                # generic table parsing; fall back to the statement line scan.
+                line_txs = self._parse_statement_lines(email.body_html, since_date)
+                if len(line_txs) > len(transactions):
+                    transactions = line_txs
             if transactions:
                 result.raw_transactions.extend(transactions)
                 return result
@@ -213,23 +220,29 @@ class CmbEmailParser(EmailParserBase):
         mapping: dict[str, int] = {}
         for i, h in enumerate(headers):
             h_lower = h.lower()
+            # first-wins: the earliest matching column keeps the slot so that
+            # e.g. 交易日期 wins over the later 记账日期 column.
             if any(kw in h_lower for kw in ["日期", "时间", "date", "time"]):
-                mapping["date"] = i
+                mapping.setdefault("date", i)
             elif any(kw in h_lower for kw in ["商户", "交易对手", "对方", "merchant", "description", "摘要", "说明"]):
-                mapping["merchant"] = i
+                mapping.setdefault("merchant", i)
             elif any(kw in h_lower for kw in ["收入", "存入", "收入金额", "credit", "income"]):
-                mapping["income"] = i
+                mapping.setdefault("income", i)
             elif any(kw in h_lower for kw in ["支出", "支取", "支出金额", "扣款", "debit", "expense"]):
-                mapping["expense"] = i
+                mapping.setdefault("expense", i)
             elif any(kw in h_lower for kw in ["金额", "amount", "交易金额"]):
-                mapping["amount"] = i
+                mapping.setdefault("amount", i)
             elif any(kw in h_lower for kw in ["卡号", "尾号", "card", "账号"]):
-                mapping["card"] = i
+                mapping.setdefault("card", i)
             elif any(kw in h_lower for kw in ["备注", "note", "附言", "用途"]):
-                mapping["note"] = i
+                mapping.setdefault("note", i)
         return mapping
 
     def _row_to_transaction(self, cells: list[str], col_map: dict[str, int]) -> RawTransaction | None:
+        joined = " ".join(cells)
+        if "<" in joined and ">" in joined:
+            # Leftover HTML markup means this is a layout artifact row.
+            return None
         # Try to get date
         date_str = cells[col_map.get("date", 0)] if "date" in col_map else ""
         if not date_str:
@@ -245,16 +258,19 @@ class CmbEmailParser(EmailParserBase):
         direction = BillDirection.EXPENSE
 
         if "income" in col_map and "expense" in col_map:
-            income_str = cells[col_map["income"]].replace(",", "").replace("+", "").strip()
-            expense_str = cells[col_map["expense"]].replace(",", "").replace("-", "").strip()
-            if income_str and income_str != "-":
-                amount = Decimal(income_str)
-                direction = BillDirection.INCOME
-            elif expense_str and expense_str != "-":
-                amount = Decimal(expense_str)
-                direction = BillDirection.EXPENSE
+            income_str = self._clean_amount(cells[col_map["income"]]).lstrip("+")
+            expense_str = self._clean_amount(cells[col_map["expense"]]).lstrip("-").lstrip("(").rstrip(")")
+            try:
+                if income_str and income_str != "-":
+                    amount = Decimal(income_str)
+                    direction = BillDirection.INCOME
+                elif expense_str and expense_str != "-":
+                    amount = Decimal(expense_str)
+                    direction = BillDirection.EXPENSE
+            except InvalidOperation:
+                return None
         elif "amount" in col_map:
-            amt_str = cells[col_map["amount"]].replace(",", "").strip()
+            amt_str = self._clean_amount(cells[col_map["amount"]])
             # Detect sign
             if amt_str.startswith("-") or amt_str.startswith("("):
                 direction = BillDirection.EXPENSE
@@ -317,6 +333,121 @@ class CmbEmailParser(EmailParserBase):
             except ValueError:
                 continue
         return None
+
+    def _parse_statement_lines(self, html: str, since_date: date | None) -> list[RawTransaction]:
+        """Scan flattened statement text for per-transaction line groups.
+
+        CMB monthly statements render each transaction as a fixed line group
+        (type / MMDD / MMDD / merchant / ``¥`` amount / card tail / country /
+        original amount); the type cell uses rowspan so it only appears once
+        per group. Anchoring on the ``¥`` amount line and looking back three
+        lines recovers every group even when table parsing fails.
+        """
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:  # pragma: no cover - bs4/lxml are server deps
+            return []
+
+        lines = [ln.strip() for ln in BeautifulSoup(html, "lxml").get_text("\n").splitlines()]
+        lines = [ln for ln in lines if ln]
+
+        period_m = re.search(r"(\d{4})/(\d{1,2})/(\d{1,2})\s*-\s*(\d{4})/(\d{1,2})/(\d{1,2})", html)
+        if period_m:
+            period_start = date(int(period_m.group(1)), int(period_m.group(2)), int(period_m.group(3)))
+            period_end = date(int(period_m.group(4)), int(period_m.group(5)), int(period_m.group(6)))
+        else:
+            period_start = None
+            period_end = None
+
+        transactions: list[RawTransaction] = []
+        current_type = "消费"
+        for i, line in enumerate(lines):
+            amt_m = self._YEN_AMOUNT.match(line)
+            if not amt_m or i < 3:
+                continue
+            if not (self._MMDD.match(lines[i - 3]) and self._MMDD.match(lines[i - 2])):
+                continue
+            merchant = lines[i - 1]
+            if not merchant or merchant.startswith("¥") or self._MMDD.match(merchant):
+                continue
+
+            for back in range(i - 3, max(-1, i - 10), -1):
+                if lines[back] in self._TX_TYPES:
+                    current_type = lines[back]
+                    break
+
+            mm, dd = int(lines[i - 3][:2]), int(lines[i - 3][2:])
+            if period_start is not None:
+                # Interpret MMDD inside the statement period (handles annual
+                # rollover); lines outside the period are installment/future
+                # deduction plans, not real transactions.
+                year = period_start.year
+                occurred_on = date(year, mm, dd)
+                if occurred_on < period_start:
+                    occurred_on = date(year + 1, mm, dd)
+                if not (period_start <= occurred_on <= period_end):
+                    continue
+            else:
+                occurred_on = self._resolve_mmdd_date(mm, dd)
+            if since_date and occurred_on < since_date:
+                continue
+
+            raw_amount = Decimal(amt_m.group(1).replace(",", ""))
+            direction = (
+                BillDirection.INCOME
+                if raw_amount < 0 or current_type in ("还款", "退货", "退款")
+                else BillDirection.EXPENSE
+            )
+            amount = abs(raw_amount)
+            if amount <= 0:
+                # Zero-amount rows are things like annual-fee progress markers.
+                continue
+
+            card_last4 = lines[i + 1] if i + 1 < len(lines) and self._MMDD.match(lines[i + 1]) else ""
+            stable = f"{occurred_on.isoformat()}|{merchant}|{amount}|{current_type}|{card_last4}"
+            external_id = "cmb:" + hashlib.sha256(stable.encode("utf-8")).hexdigest()[:24]
+
+            transactions.append(
+                RawTransaction(
+                    source_name=self.source_name,
+                    occurred_on=occurred_on,
+                    amount=amount,
+                    direction=direction,
+                    merchant_name=merchant,
+                    channel="cmb_email_lines",
+                    card_last4=card_last4[:4],
+                    note=current_type,
+                    external_id=external_id,
+                    raw_data={"statement_lines": lines[max(0, i - 3) : i + 2]},
+                )
+            )
+        return transactions
+
+    @staticmethod
+    def _resolve_mmdd_date(mm: int, dd: int) -> date:
+        """Resolve a bare MMDD to a full date when no statement period exists."""
+        today = date.today()
+        try:
+            candidate = date(today.year, mm, dd)
+        except ValueError:
+            return today
+        if candidate > today:
+            candidate = date(today.year - 1, mm, dd)
+        return candidate
+
+    _TX_TYPES = ("消费", "还款", "退货", "退款", "预借现金", "分期", "费用", "调整", "其他", "网上支付")
+    _YEN_AMOUNT = re.compile(r"^¥\s*(-?[\d,]+\.\d{2})$")
+    _MMDD = re.compile(r"^\d{4}$")
+
+    @classmethod
+    def _clean_amount(cls, text: str) -> str:
+        """Normalize a table amount cell: strip currency codes/symbols/commas."""
+        cleaned = (text or "").strip().replace(",", "")
+        cleaned = cls._CURRENCY_PREFIX.sub("", cleaned)
+        cleaned = cleaned.replace("¥", "").replace("￥", "").replace("$", "")
+        return cleaned.strip()
+
+    _CURRENCY_PREFIX = re.compile(r"^(CNY|JPY|USD|EUR|GBP|HKD|RMB)\s*", re.IGNORECASE)
 
     def _parse_text_format(self, text: str, since_date: date | None) -> list[RawTransaction]:
         """Parse plain-text statement format."""

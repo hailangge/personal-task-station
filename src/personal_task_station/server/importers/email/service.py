@@ -93,6 +93,8 @@ class EmailImportService:
                     since_date=since,
                     passwords=getattr(self.settings, "bill_zip_passwords", ()),
                 )
+                result.email_subject = email.subject
+                result.email_from = email.from_addr
                 if result.raw_transactions or result.errors:
                     results.append(result)
                 if mark_seen:

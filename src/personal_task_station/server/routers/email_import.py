@@ -122,14 +122,19 @@ def import_from_email(
 def sync_all_accounts(
     since_date: date | None = None,
     force: bool = False,
+    ignore_seen: bool = False,
     session: Session = Depends(get_db),
 ) -> list[ImportJobRead]:
     """Sync all active email accounts for new transactions.
 
     Skips accounts whose last import was within the past hour unless
     ``force=true`` is passed; the background poller passes ``force`` every run.
+    ``ignore_seen=true`` reprocesses already-read bill emails (useful for
+    re-importing after parser fixes; external-id dedupe keeps the ledger clean).
     """
-    jobs = sync_accounts(session, since_date=since_date, force=force)
+    jobs = sync_accounts(
+        session, since_date=since_date, force=force, ignore_seen=ignore_seen
+    )
     return [ImportJobRead.model_validate(job) for job in jobs]
 
 
@@ -148,6 +153,8 @@ def list_import_logs(account_id: int, session: Session = Depends(get_db)) -> lis
     return [
         {
             "id": log.id,
+            "email_subject": log.email_subject,
+            "email_from": log.email_from,
             "parser_used": log.parser_used,
             "transaction_count": log.transaction_count,
             "error_message": log.error_message,

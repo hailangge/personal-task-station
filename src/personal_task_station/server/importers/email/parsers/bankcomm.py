@@ -22,7 +22,7 @@ class BankcommEmailParser(EmailParserBase):
     """
 
     source_name = "bankcomm_email"
-    sender_patterns = ["bankcomm.com", "95559@", "bocom.com.cn"]
+    sender_patterns = ["bankcomm.com", "95559@", "bocom.com.cn", "bocomcc.com"]
     subject_patterns = ["交通银行", "信用卡", "交易提醒", "账单", "交行"]
 
     def parse(self, email: FetchedEmail, since_date: date | None = None,
@@ -176,6 +176,11 @@ class BankcommEmailParser(EmailParserBase):
         return mapping
 
     def _row_to_transaction(self, cells: list[str], col_map: dict[str, int]) -> RawTransaction | None:
+        joined = " ".join(cells)
+        if "<" in joined and ">" in joined:
+            # Leftover HTML markup in the cell text means the row is a layout
+            # artifact, not a real data row.
+            return None
         date_str = cells[col_map.get("date", 0)] if "date" in col_map else ""
         if not date_str:
             return None
@@ -187,8 +192,8 @@ class BankcommEmailParser(EmailParserBase):
         direction = BillDirection.EXPENSE
 
         if "income" in col_map and "expense" in col_map:
-            inc = cells[col_map["income"]].replace(",", "").replace("+", "").strip()
-            exp = cells[col_map["expense"]].replace(",", "").replace("-", "").strip()
+            inc = self._clean_amount(cells[col_map["income"]]).lstrip("+")
+            exp = self._clean_amount(cells[col_map["expense"]]).lstrip("-").lstrip("(").rstrip(")")
             if inc and inc not in ("-", ""):
                 try:
                     amount = Decimal(inc)
@@ -202,7 +207,7 @@ class BankcommEmailParser(EmailParserBase):
                 except InvalidOperation:
                     pass
         elif "amount" in col_map:
-            amt_str = cells[col_map["amount"]].replace(",", "").strip()
+            amt_str = self._clean_amount(cells[col_map["amount"]])
             if amt_str.startswith("-") or amt_str.startswith("("):
                 direction = BillDirection.EXPENSE
                 amt_str = amt_str.lstrip("-").strip("()")
@@ -219,7 +224,12 @@ class BankcommEmailParser(EmailParserBase):
         if amount <= 0:
             return None
 
-        merchant = cells[col_map["merchant"]] if "merchant" in col_map else "未知商户"
+        desc = cells[col_map["merchant"]] if "merchant" in col_map else ""
+        # Credit-card statement context: repayments/refunds reduce the debt,
+        # i.e. money flowing back into the ledger as income-side entries.
+        if any(kw in desc for kw in ("还款", "退货", "退款", "贷记", "溢缴款")):
+            direction = BillDirection.INCOME
+        merchant = self._DESC_PREFIX.sub("", desc).strip() or desc.strip() or "未知商户"
         card_last4 = ""
         if "card" in col_map:
             m = re.search(r"(\d{4})", cells[col_map["card"]])
@@ -236,6 +246,19 @@ class BankcommEmailParser(EmailParserBase):
             card_last4=card_last4,
             raw_data={"cells": cells},
         )
+
+    _CURRENCY_PREFIX = re.compile(r"^(CNY|JPY|USD|EUR|GBP|HKD|RMB)\s*", re.IGNORECASE)
+    _DESC_PREFIX = re.compile(
+        r"^(消费|还款|退货|退款|预借现金|网上支付|快捷支付|分期|取现|费用)\s*(（特约）|\(特约\))?\s*"
+    )
+
+    @classmethod
+    def _clean_amount(cls, text: str) -> str:
+        """Normalize a table amount cell: strip currency codes/symbols/commas."""
+        cleaned = (text or "").strip().replace(",", "")
+        cleaned = cls._CURRENCY_PREFIX.sub("", cleaned)
+        cleaned = cleaned.replace("¥", "").replace("￥", "").replace("$", "")
+        return cleaned.strip()
 
     def _parse_date(self, date_str: str) -> date | None:
         formats = [

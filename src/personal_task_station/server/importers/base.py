@@ -30,6 +30,9 @@ class ImportResult:
     raw_transactions: list[RawTransaction] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped_count: int = 0
+    # Filled by the email import service for audit logging; parsers ignore it.
+    email_subject: str = ""
+    email_from: str = ""
 
 
 class TransactionImporter(Protocol):

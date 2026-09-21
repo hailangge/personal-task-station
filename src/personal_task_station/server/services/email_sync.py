@@ -102,23 +102,17 @@ def run_account_import(
     if report.import_job_id is not None:
         import_job = session.get(BillImportJob, report.import_job_id)
 
-    messages = ["; ".join(result.errors)[:500] for result in results if result.errors]
-    if report.duplicate_count:
-        messages.append(f"{report.duplicate_count} duplicate transaction(s) skipped")
-    if report.status == "ignored" and not raw_txs:
-        messages.append("no transactions parsed")
-
     account.last_import_at = utcnow()
     for result in results:
         session.add(
             EmailImportLog(
                 email_account_id=account.id,
                 email_uid="batch",
-                email_subject="",
-                email_from="",
+                email_subject=result.email_subject[:500],
+                email_from=result.email_from[:255],
                 parser_used=result.source_name,
                 transaction_count=len(result.raw_transactions),
-                error_message="; ".join(msg for msg in messages if msg)[:1000] if not result.raw_transactions else "",
+                error_message="; ".join(result.errors)[:1000],
             )
         )
     session.commit()
@@ -133,6 +127,7 @@ def sync_accounts(
     since_date: date | None = None,
     throttle_minutes: int = 60,
     force: bool = False,
+    ignore_seen: bool = False,
 ) -> list:
     """Sync every active email account, respecting a per-account throttle."""
     accounts = (
@@ -151,7 +146,9 @@ def sync_accounts(
             if age_minutes < throttle_minutes:
                 continue
         try:
-            job = run_account_import(session, account, since_date=since_date)
+            job = run_account_import(
+                session, account, since_date=since_date, ignore_seen=ignore_seen
+            )
         except Exception as exc:  # noqa: BLE001 - keep syncing other accounts
             logger.warning("Email sync failed for account %s: %s", account.id, exc)
             continue
